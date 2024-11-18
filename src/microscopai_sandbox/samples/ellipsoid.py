@@ -102,8 +102,8 @@ class Ellipsoid(object):
             if np.random.rand() < self.rotation_probability:
                 cell.orientation += np.random.normal(0, self.rotation)
             if np.random.rand() < self.axis_deformation_probability:
-                cell.major_axis -= np.random.normal(0, self.axis_deformation_rate)
-                cell.minor_axis += np.random.normal(0, self.axis_deformation_rate)
+                cell.major_axis -= cell.major_axis*self.axis_deformation_rate
+                cell.minor_axis += cell.minor_axis*self.axis_deformation_rate
 
     def generate_random_coordinates(self, shape, spacing, num_points):
         coordinates = [(self.sample_size[0] // 2, self.sample_size[1] // 2)]

@@ -28,6 +28,7 @@ class MicroscopAIsandbox(object):
         self.ADC_per_photon_conversion = 1.0
         self.ADC_offset = 100.0
         self.readout_noise = 50.0
+        self.gaussian_sigma = 2.0
 
     def load_sample(self, sample: Sample, acquire: bool = False):
 
@@ -83,6 +84,7 @@ class MicroscopAIsandbox(object):
             ADC_per_photon_conversion=self.ADC_per_photon_conversion,
             ADC_offset=self.ADC_offset,
             readout_noise=self.readout_noise,
+            gaussian_sigma=self.gaussian_sigma,
         )
 
         bleaching_rate = self.sample.bleaching_rate
@@ -116,6 +118,9 @@ class MicroscopAIsandbox(object):
 
     def set_readout_noise(self, readout_noise: float = 50.0):
         self.readout_noise = readout_noise
+
+    def set_gaussian_sigma(self, gaussian_sigma: float = 5.0):
+        self.gaussian_sigma = gaussian_sigma
 
     def _check_sample(self):
         if self.sample is None:

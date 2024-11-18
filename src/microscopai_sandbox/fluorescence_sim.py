@@ -2,6 +2,7 @@ import math
 import numpy as np
 
 from numba import njit, prange
+from skimage.filters import gaussian
 
 
 def generate_image(
@@ -16,6 +17,7 @@ def generate_image(
     ADC_per_photon_conversion: float = 1.0,
     ADC_offset: float = 100.0,
     readout_noise: float = 50.0,
+    gaussian_sigma: float = 5.0
 ):
 
     y_locs, x_locs = np.nonzero(mask)
@@ -45,6 +47,7 @@ def generate_image(
         + ADC_offset
     )
     out[out < 0] = 0
+    out = gaussian(out, gaussian_sigma)
     return out
 
 
