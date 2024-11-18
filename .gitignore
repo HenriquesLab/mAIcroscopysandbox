@@ -1,0 +1,20 @@
+# Directories
+__pycache__/
+.venv/
+.ruff_cache/
+dist/
+build/
+data/
+*.egg-info/
+src/supramolsim/configuration/*/*template*
+
+# Files
+.DS_Store
+.coverage
+__pycache__
+poetry.lock
+output.txt
+dist
+*.gz
+*.cif
+*_ignore_*
