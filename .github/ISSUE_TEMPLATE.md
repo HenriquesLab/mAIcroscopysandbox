@@ -1,4 +1,4 @@
-* MicroscopAI Sandbox version:
+* mAIcroscopy Sandbox version:
 * Python version:
 * Operating System:
 

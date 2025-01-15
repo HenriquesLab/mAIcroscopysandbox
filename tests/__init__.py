@@ -1,1 +1,1 @@
-"""Unit test package for microscopai_sandbox."""
+"""Unit test package for maicroscopy_sandbox."""

@@ -7,7 +7,7 @@ from .samples.sample import Sample
 from matplotlib import pyplot as plt
 
 
-class MicroscopAIsandbox(object):
+class mAIcroscopySandbox(object):
     def __init__(
         self,
         stage_size: np.array = [5000, 5000],
@@ -36,7 +36,10 @@ class MicroscopAIsandbox(object):
         self.bleaching = np.ones(sample.sample_size).astype(np.float32)
 
         print("Resetting stage position to center position")
-        self.current_position = [self.stage_size[0] // 2, self.stage_size[1] // 2]
+        self.current_position = [
+            self.stage_size[0] // 2,
+            self.stage_size[1] // 2,
+        ]
         self.sample = sample
 
         if acquire:
@@ -88,9 +91,9 @@ class MicroscopAIsandbox(object):
         )
 
         bleaching_rate = self.sample.bleaching_rate
-        self.bleaching[row_start:row_end, col_start:col_end] -= bleaching_rate * (
-            self.laser_power / 100
-        )
+        self.bleaching[
+            row_start:row_end, col_start:col_end
+        ] -= bleaching_rate * (self.laser_power / 100)
         self.bleaching[self.bleaching < 0] = 0
 
         return frame
@@ -110,7 +113,9 @@ class MicroscopAIsandbox(object):
     def set_sigma_std(self, sigma_std: float = 0.01):
         self.sigma_std = sigma_std
 
-    def set_ADC_per_photon_conversion(self, ADC_per_photon_conversion: float = 1.0):
+    def set_ADC_per_photon_conversion(
+        self, ADC_per_photon_conversion: float = 1.0
+    ):
         self.ADC_per_photon_conversion = ADC_per_photon_conversion
 
     def set_ADC_offset(self, ADC_offset: float = 100.0):
@@ -131,19 +136,27 @@ class MicroscopAIsandbox(object):
         new_movement = movement
 
         if self.current_position[0] + movement[0] > self.stage_size[0]:
-            warnings.warn("Stage out of bounds, moving to furthest Y axis edge")
+            warnings.warn(
+                "Stage out of bounds, moving to furthest Y axis edge"
+            )
             new_movement[0] = self.stage_size[0] - self.current_position[0]
 
         if self.current_position[1] + movement[1] > self.stage_size[1]:
-            warnings.warn("Stage out of bounds, moving to furthest X axis edge")
+            warnings.warn(
+                "Stage out of bounds, moving to furthest X axis edge"
+            )
             new_movement[1] = self.stage_size[1] - self.current_position[1]
 
         if self.current_position[0] + movement[0] < 0:
-            warnings.warn("Stage out of bounds, moving to furthest Y axis edge")
+            warnings.warn(
+                "Stage out of bounds, moving to furthest Y axis edge"
+            )
             new_movement[0] = -self.current_position[0]
 
         if self.current_position[1] + movement[1] < 0:
-            warnings.warn("Stage out of bounds, moving to furthest X axis edge")
+            warnings.warn(
+                "Stage out of bounds, moving to furthest X axis edge"
+            )
             new_movement[1] = -self.current_position[1]
 
         return new_movement

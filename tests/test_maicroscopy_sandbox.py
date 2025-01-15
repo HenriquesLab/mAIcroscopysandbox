@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
-"""Tests for `microscopai_sandbox` package."""
+"""Tests for `maicroscopy_sandbox` package."""
 
 import pytest
 
 
-from microscopai_sandbox import microscopai_sandbox
+from maicroscopy_sandbox import maicroscopy_sandbox
 
 
 @pytest.fixture
