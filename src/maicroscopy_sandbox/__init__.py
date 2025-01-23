@@ -7,3 +7,4 @@ __version__ = "0.1.0"
 from .maicroscopy_sandbox import mAIcroscopySandbox
 from .samples.sample import Sample
 from .samples.ellipsoid import Ellipsoid
+from .smartSRRF import smartSRRF
