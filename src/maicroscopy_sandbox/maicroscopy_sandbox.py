@@ -13,6 +13,7 @@ class mAIcroscopySandbox(object):
         stage_size: np.array = [5000, 5000],
         fov_size: np.array = [300, 300],
         laser_intensity: float = 100000,
+        pixel_size: float = 100,
     ):
         self.stage_size = stage_size
         self.bleaching = np.ones(stage_size).astype(np.float32)
@@ -91,9 +92,11 @@ class mAIcroscopySandbox(object):
         )
 
         bleaching_rate = self.sample.bleaching_rate
-        self.bleaching[
-            row_start:row_end, col_start:col_end
-        ] -= bleaching_rate * (self.laser_power / 100)
+        self.bleaching[row_start:row_end, col_start:col_end] -= (
+            self.bleaching[row_start:row_end, col_start:col_end]
+            * bleaching_rate
+            * (self.laser_power / 100)
+        )
         self.bleaching[self.bleaching < 0] = 0
 
         return frame
