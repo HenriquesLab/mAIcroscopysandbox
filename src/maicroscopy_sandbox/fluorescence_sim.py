@@ -8,7 +8,7 @@ from skimage.filters import gaussian
 def generate_image(
     mask: np.array,
     bleaching: np.array,
-    laser_intensity: float = 100000.0,
+    laser_intensity: float = 1000.0,
     wavelenght: float = 600,
     wavelenght_std: float = 50,
     NA: float = 1.2,
