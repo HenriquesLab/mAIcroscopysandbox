@@ -88,7 +88,7 @@ class StaphMembrane(object):
 
         return cells
 
-    def create_cell(self, coordinates):
+    def create_cell(self, coordinates, progression: int = None):
         """
         Create a single bacterial cell with random properties.
 
@@ -107,7 +107,9 @@ class StaphMembrane(object):
         p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
         p3 = 100 - (p1 + p2)
-        progression = np.random.randint(0, 100)
+
+        if progression is None:
+            progression = np.random.randint(0, 100)
 
         cell = Cell(
             coordinates[0],
@@ -121,8 +123,7 @@ class StaphMembrane(object):
             p3,
             0,
         )
-        for i in range(progression):
-            self.calculate_dynamics(cell)
+        self.calculate_dynamics(cell, rate=progression)
         return cell
 
     def generate_mask(self):
@@ -147,7 +148,7 @@ class StaphMembrane(object):
             # Skip if cell was deleted (e.g., due to division)
             if cell_id not in self.cells:
                 continue
-            self.calculate_dynamics(cell_id)
+            self.calculate_dynamics(cell_id, rate=self.progression_rate)
 
         # Resolve all collisions after dynamics updates
         self.resolve_all_collisions()
@@ -333,7 +334,7 @@ class StaphMembrane(object):
             if not collisions_found:
                 break
 
-    def calculate_dynamics(self, cell_or_id):
+    def calculate_dynamics(self, cell_or_id, rate=2):
         """
         Update cell progression and trigger division if needed.
 
@@ -353,14 +354,16 @@ class StaphMembrane(object):
             cell_id = cell_or_id
             cell = self.cells[cell_id]
 
-        cell.progression += self.progression_rate
-        if cell.progression < cell.p1 or (
-            100 > cell.progression > (cell.p1 + cell.p2)
-        ):
-            # Growth phase
-            cell.major_axis += cell.max_axis_increase
-        elif cell.progression >= 100 and cell_id is not None:
-            self.divide_cell(cell_id)
+        for i in range(rate):
+            cell.progression += 1
+            if cell.progression < cell.p1 or (
+                100 > cell.progression > (cell.p1 + cell.p2)
+            ):
+                # Growth phase
+                cell.major_axis += cell.max_axis_increase
+            elif cell.progression >= 100 and cell_id is not None:
+                self.divide_cell(cell_id)
+                break
 
     def divide_cell(self, cell_id):
         """
@@ -404,8 +407,12 @@ class StaphMembrane(object):
 
         # Create daughter cells using create_cell method
         # This ensures they have proper random variations
-        daughter1 = self.create_cell(daughter1_pos)
-        daughter2 = self.create_cell(daughter2_pos)
+        daughter1 = self.create_cell(
+            daughter1_pos, progression=np.random.randint(0, 10)
+        )
+        daughter2 = self.create_cell(
+            daughter2_pos, progression=np.random.randint(0, 10)
+        )
 
         # Rotate each daughter cell by 90 degrees from parent
         daughter1.orientation = parent_cell.orientation + np.random.normal(
