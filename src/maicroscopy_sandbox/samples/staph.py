@@ -6,6 +6,41 @@ from skimage.morphology import binary_erosion, binary_dilation
 
 
 class StaphMembrane(object):
+    """
+    Simulates bacterial cell membrane dynamics with cell division.
+
+    This class models the growth, septum formation, and division of
+    Staphylococcus-like bacterial cells. Cells progress through three
+    phases (p1: growth, p2: septum formation, p3: pre-division) before
+    dividing into two daughter cells.
+
+    Parameters
+    ----------
+    sample_size : np.array, default=[1000, 1000]
+        Size of the sample area in pixels [height, width].
+    bleaching_rate : float, default=0.001
+        Rate of fluorophore bleaching per frame.
+    n_objects : int, default=1
+        Initial number of bacterial cells to create.
+    pixel_size : int, default=100
+        Size of one pixel in nanometers.
+    cell_size_std : float, default=0.05
+        Standard deviation of cell size as fraction of mean size.
+    p1_rate : int, default=42
+        Mean percentage of cell cycle spent in growth phase.
+    p2_rate : int, default=29
+        Mean percentage of cell cycle spent in septum formation.
+    progression_rate : int, default=2
+        Progression percentage points per frame (2 ≈ 1 minute real time).
+
+    Attributes
+    ----------
+    cells : dict
+        Dictionary of Cell objects indexed by cell ID.
+    max_label : int
+        Maximum cell ID used for tracking.
+    """
+
     def __init__(
         self,
         sample_size: np.array = [1000, 1000],
@@ -17,19 +52,31 @@ class StaphMembrane(object):
         p2_rate: int = 29,
         progression_rate: int = 2,
     ):
-        """ """
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
         self.cell_size = 1000 // pixel_size
         self.cell_size_std = self.cell_size * cell_size_std
         self.p1_rate = p1_rate
         self.p2_rate = p2_rate
-        self.axis_ratio = 1.4
+        self.axis_ratio = 1.6
         self.progression_rate = progression_rate  # percentage points per frame, 2 equals roughly 1 minute of real time
         self.cells = self.create_cells(n_objects)
         self.max_label = n_objects - 1
 
     def create_cells(self, n_objects):
+        """
+        Create multiple bacterial cells at random non-overlapping positions.
+
+        Parameters
+        ----------
+        n_objects : int
+            Number of cells to create.
+
+        Returns
+        -------
+        dict
+            Dictionary of Cell objects indexed by integer IDs.
+        """
         cells = {}
         coordinates = self.generate_random_coordinates(
             (self.sample_size[0], self.sample_size[1]),
@@ -42,6 +89,19 @@ class StaphMembrane(object):
         return cells
 
     def create_cell(self, coordinates):
+        """
+        Create a single bacterial cell with random properties.
+
+        Parameters
+        ----------
+        coordinates : tuple
+            (row, col) position for cell center.
+
+        Returns
+        -------
+        Cell
+            New cell object with randomized size, orientation, and phase rates.
+        """
         length = np.random.normal(self.cell_size, self.cell_size_std)
         cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.1)
         p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
@@ -65,9 +125,19 @@ class StaphMembrane(object):
             self.calculate_dynamics(cell)
         return cell
 
-    # TODO fix septum and implement cell splitting
-
     def generate_mask(self):
+        """
+        Generate fluorescence mask showing all cells with membranes and septa.
+
+        Updates cell dynamics (growth, septum formation, division), resolves
+        collisions, and renders all cells including membranes and septa based
+        on their current progression phase.
+
+        Returns
+        -------
+        np.ndarray
+            2D array of fluorescence intensities for the sample.
+        """
         mask = np.zeros(self.sample_size).astype(np.float32)
 
         # First, update dynamics for all cells
@@ -95,7 +165,7 @@ class StaphMembrane(object):
             )
             cell_mask[rr, cc] = 1
             eroded = binary_erosion(cell_mask)
-            for i in range(2):
+            for i in range(3):
                 eroded = binary_erosion(eroded)
             membrane_mask = cell_mask - eroded
 
@@ -264,6 +334,17 @@ class StaphMembrane(object):
                 break
 
     def calculate_dynamics(self, cell_or_id):
+        """
+        Update cell progression and trigger division if needed.
+
+        Advances cell through growth phases (p1, p2, p3) and triggers
+        cell division when progression reaches 100.
+
+        Parameters
+        ----------
+        cell_or_id : Cell or int
+            Either a Cell object or cell ID from self.cells dictionary.
+        """
         # Accept either a Cell object or a cell_id
         if isinstance(cell_or_id, Cell):
             cell = cell_or_id
@@ -282,7 +363,23 @@ class StaphMembrane(object):
             self.divide_cell(cell_id)
 
     def divide_cell(self, cell_id):
-        """Split a cell into two daughter cells along its major axis."""
+        """
+        Split a cell into two daughter cells along its major axis.
+
+        Creates two daughter cells positioned along the parent's major axis,
+        rotated 90 degrees from parent orientation. Handles collision
+        detection and pushes neighbors away if needed.
+
+        Parameters
+        ----------
+        cell_id : int
+            ID of the parent cell to divide.
+
+        Notes
+        -----
+        The parent cell is deleted and replaced with two daughters at
+        cell IDs (max_id + 1) and (max_id + 2).
+        """
         parent_cell = self.cells[cell_id]
 
         # Calculate positions for two daughter cells along major axis
@@ -311,8 +408,12 @@ class StaphMembrane(object):
         daughter2 = self.create_cell(daughter2_pos)
 
         # Rotate each daughter cell by 90 degrees from parent
-        daughter1.orientation = parent_cell.orientation + np.pi / 2
-        daughter2.orientation = parent_cell.orientation + np.pi / 2
+        daughter1.orientation = parent_cell.orientation + np.random.normal(
+            np.pi / 2, 0.2
+        )
+        daughter2.orientation = parent_cell.orientation + np.random.normal(
+            np.pi / 2, 0.2
+        )
 
         # Normalize orientations to [-pi, pi]
         daughter1.orientation = np.arctan2(
@@ -387,6 +488,23 @@ class StaphMembrane(object):
         self.max_label = max_id
 
     def generate_random_coordinates(self, shape, spacing, num_points):
+        """
+        Generate random non-overlapping coordinates for cell placement.
+
+        Parameters
+        ----------
+        shape : tuple
+            (height, width) of the sample area.
+        spacing : float
+            Minimum distance between cell centers.
+        num_points : int
+            Number of coordinates to generate.
+
+        Returns
+        -------
+        list
+            List of (row, col) tuples for cell positions.
+        """
         coordinates = [(self.sample_size[0] // 2, self.sample_size[1] // 2)]
         while len(coordinates) < num_points:
             # Generate a random point
@@ -407,6 +525,33 @@ class StaphMembrane(object):
 
 @dataclass
 class Cell:
+    """
+    Data class representing a single bacterial cell.
+
+    Attributes
+    ----------
+    center_row : int
+        Row position of cell center in pixels.
+    center_col : int
+        Column position of cell center in pixels.
+    major_axis : int
+        Length of cell major axis in pixels.
+    minor_axis : int
+        Length of cell minor axis in pixels.
+    max_axis_increase : float
+        Growth rate of major axis per frame.
+    orientation : int
+        Cell orientation angle in radians.
+    p1 : int
+        Percentage of cycle for growth phase.
+    p2 : int
+        Percentage of cycle for septum formation.
+    p3 : int
+        Percentage of cycle for pre-division phase.
+    progression : int
+        Current progression through cell cycle (0-100).
+    """
+
     center_row: int
     center_col: int
     major_axis: int

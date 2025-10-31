@@ -8,6 +8,33 @@ from matplotlib import pyplot as plt
 
 
 class mAIcroscopySandbox(object):
+    """
+    Simulated fluorescence microscope with realistic imaging parameters.
+
+    Provides a virtual microscopy environment with stage control, laser
+    illumination, photobleaching, and detector noise characteristics.
+
+    Parameters
+    ----------
+    stage_size : np.array, default=[5000, 5000]
+        Size of the microscope stage in pixels [height, width].
+    fov_size : np.array, default=[300, 300]
+        Field of view size in pixels [height, width].
+    laser_intensity : float, default=100000
+        Maximum laser intensity in photons per pixel.
+    pixel_size : float, default=100
+        Physical size of one pixel in nanometers.
+
+    Attributes
+    ----------
+    current_position : list
+        Current stage position [row, col].
+    laser_power : float
+        Current laser power as percentage (0-100).
+    sample : Sample
+        Currently loaded sample object.
+    """
+
     def __init__(
         self,
         stage_size: np.array = [5000, 5000],
@@ -32,6 +59,21 @@ class mAIcroscopySandbox(object):
         self.gaussian_sigma = 2.0
 
     def load_sample(self, sample: Sample, acquire: bool = False):
+        """
+        Load a sample onto the microscope stage.
+
+        Parameters
+        ----------
+        sample : Sample
+            Sample object to load.
+        acquire : bool, default=False
+            If True, acquire an image immediately after loading.
+
+        Returns
+        -------
+        np.ndarray or None
+            Acquired image if acquire=True, otherwise None.
+        """
 
         print(f"Loading sample of size: {sample.sample_size}")
         self.bleaching = np.ones(sample.sample_size).astype(np.float32)
@@ -48,6 +90,21 @@ class mAIcroscopySandbox(object):
             return self.acquire_image()
 
     def move_stage(self, movement: np.array = [0, 0], acquire: bool = False):
+        """
+        Move the microscope stage by specified offset.
+
+        Parameters
+        ----------
+        movement : np.array, default=[0, 0]
+            Movement offset in pixels [row_delta, col_delta].
+        acquire : bool, default=False
+            If True, acquire an image after moving.
+
+        Returns
+        -------
+        np.ndarray or None
+            Acquired image if acquire=True, otherwise None.
+        """
         movement = self._check_move_stage(movement)
         self.current_position[0] += movement[0]
         self.current_position[1] += movement[1]
@@ -61,6 +118,14 @@ class mAIcroscopySandbox(object):
             print(f"Stage Moved to position: {self.current_position}")
 
     def set_laser_power(self, laser_power: float = 100.0):
+        """
+        Set the laser power percentage.
+
+        Parameters
+        ----------
+        laser_power : float, default=100.0
+            Laser power as percentage (0-100), clamped to valid range.
+        """
         if laser_power > 100.0:
             laser_power = 100.0
         if laser_power < 0:
@@ -68,6 +133,17 @@ class mAIcroscopySandbox(object):
         self.laser_power = laser_power
 
     def acquire_image(self):
+        """
+        Acquire a fluorescence image at the current stage position.
+
+        Generates an image with realistic photon noise, bleaching, detector
+        noise, and Gaussian blur based on microscope parameters.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated fluorescence image with noise and bleaching effects.
+        """
 
         sample_mask = self.sample.generate_mask()
 
@@ -102,32 +178,41 @@ class mAIcroscopySandbox(object):
         return frame
 
     def set_wavelenght(self, wavelenght: float = 600.0):
+        """Set excitation wavelength in nanometers."""
         self.wavelenght = wavelenght
 
     def set_wavelenght_std(self, wavelenght_std: float = 50.0):
+        """Set standard deviation of wavelength in nanometers."""
         self.wavelenght_std = wavelenght_std
 
     def set_NA(self, NA: float = 1.2):
+        """Set numerical aperture of the objective."""
         self.NA = NA
 
     def set_sigma(self, sigma: float = 0.21):
+        """Set mean fluorophore emission standard deviation."""
         self.sigma = sigma
 
     def set_sigma_std(self, sigma_std: float = 0.01):
+        """Set standard deviation of fluorophore emission."""
         self.sigma_std = sigma_std
 
     def set_ADC_per_photon_conversion(
         self, ADC_per_photon_conversion: float = 1.0
     ):
+        """Set analog-to-digital conversion factor (ADC units per photon)."""
         self.ADC_per_photon_conversion = ADC_per_photon_conversion
 
     def set_ADC_offset(self, ADC_offset: float = 100.0):
+        """Set baseline ADC offset value."""
         self.ADC_offset = ADC_offset
 
     def set_readout_noise(self, readout_noise: float = 50.0):
+        """Set camera readout noise standard deviation in ADC units."""
         self.readout_noise = readout_noise
 
     def set_gaussian_sigma(self, gaussian_sigma: float = 5.0):
+        """Set Gaussian blur sigma for point spread function."""
         self.gaussian_sigma = gaussian_sigma
 
     def _check_sample(self):
