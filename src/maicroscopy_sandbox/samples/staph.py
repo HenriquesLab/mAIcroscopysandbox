@@ -121,7 +121,7 @@ class StaphMembrane(object):
             p3,
             0,
         )
-        for i in range(progression // self.progression_rate):
+        for i in range(progression):
             self.calculate_dynamics(cell)
         return cell
 
