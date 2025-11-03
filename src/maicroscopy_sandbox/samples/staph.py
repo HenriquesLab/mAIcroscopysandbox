@@ -50,6 +50,7 @@ class StaphMembrane(object):
         cell_size_std: float = 0.05,
         p1_rate: int = 42,
         p2_rate: int = 29,
+        p3_rate: int = 29
         progression_rate: int = 2,
     ):
         self.sample_size = sample_size
@@ -106,7 +107,7 @@ class StaphMembrane(object):
         cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.1)
         p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
-        p3 = 100 - (p1 + p2)
+        p3 = np.random.randint(self.p3_rate - 5, self.p3_rate + 5)
 
         if progression is None:
             progression = np.random.randint(0, 100)
@@ -408,10 +409,10 @@ class StaphMembrane(object):
         # Create daughter cells using create_cell method
         # This ensures they have proper random variations
         daughter1 = self.create_cell(
-            daughter1_pos, progression=np.random.randint(0, 10)
+            daughter1_pos, progression=np.random.randint(0, parent_cell.p1)
         )
         daughter2 = self.create_cell(
-            daughter2_pos, progression=np.random.randint(0, 10)
+            daughter2_pos, progression=np.random.randint(0, parent_cell.p2)
         )
 
         # Rotate each daughter cell by 90 degrees from parent
