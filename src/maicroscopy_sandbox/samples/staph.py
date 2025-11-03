@@ -1,8 +1,10 @@
 import math
 import numpy as np
 from dataclasses import dataclass
-from skimage.draw import ellipse, line
+from skimage.draw import ellipse, line, ellipse_perimeter
 from skimage.morphology import binary_erosion, binary_dilation
+from skimage.filters import gaussian
+from scipy.ndimage import binary_fill_holes
 
 
 class StaphMembrane(object):
@@ -53,7 +55,7 @@ class StaphMembrane(object):
         p3_rate: int = 29,
         progression_rate: int = 2,
         cyto_fluor: float = 0.4,
-        axis_ratio: float = 1.6,
+        axis_ratio: float = 1.4,
     ):
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
@@ -108,7 +110,7 @@ class StaphMembrane(object):
             New cell object with randomized size, orientation, and phase rates.
         """
         length = np.random.normal(self.cell_size, self.cell_size_std)
-        cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.1)
+        cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.05)
         p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
         p3 = np.random.randint(self.p3_rate - 5, self.p3_rate + 5)
@@ -160,148 +162,29 @@ class StaphMembrane(object):
 
         # Now render ALL cells (including newly created daughter cells)
         for cell_id, cell in self.cells.items():
-            cell_mask = np.zeros(self.sample_size).astype(np.float32)
+            membrane_mask = np.zeros(self.sample_size).astype(np.float32)
+            cyto_mask = np.zeros(self.sample_size).astype(np.float32)
+            septum_mask = np.zeros(self.sample_size).astype(np.float32)
+            sep_completion = (cell.progression - cell.p1) / cell.p2
 
-            # ellipse() parameters: (r_radius, c_radius, rotation)
-            # r_radius = extent in ROW direction (vertical in image)
-            # c_radius = extent in COLUMN direction (horizontal in image)
-            # rotation = angle to rotate the ellipse
-            #
-            # We want: major_axis along orientation direction
-            # Pass major in r_radius (row/vertical), minor in c_radius (column/horizontal)
-            # Then rotate by orientation to align with specified direction
-            r_radius = cell.major_axis
-            c_radius = cell.minor_axis
-            effective_orientation = cell.orientation
-
-            rr, cc = ellipse(
+            membrane_mask, cyto_mask, septum_mask = draw_ellipse_with_axes(
+                membrane_mask,
+                cyto_mask,
+                septum_mask,
                 cell.center_row,
                 cell.center_col,
-                r_radius,
-                c_radius,
-                shape=(self.sample_size[0], self.sample_size[1]),
-                rotation=effective_orientation,
+                cell.major_axis,
+                cell.minor_axis,
+                angle_deg=np.rad2deg(cell.orientation),
+                septum_completion=sep_completion,
+                value_membrane=1,
+                value_cyto=self.cyto_fluor,
+                value_septum=2,
+                gaussian_sigma=1,
             )
-            cell_mask[rr, cc] = 1
-            eroded = binary_erosion(cell_mask)
-            for i in range(3):
-                eroded = binary_erosion(eroded)
-            membrane_mask = cell_mask - eroded
 
-            # Draw septum based on progression
-            if cell.progression >= cell.p1 and cell.progression < (
-                cell.p1 + cell.p2
-            ):
-                # Growing septum (p2 phase) - grows from edges to center
-                p2_progression = (cell.progression - cell.p1) / cell.p2
-                # Draw septum perpendicular to major axis
-                # NOTE: ellipse rotation and line angle use different conventions:
-                # ellipse(rotation=0) -> major axis vertical
-                # draw_line(angle=0) -> line horizontal
-                # Therefore, using the same angle value gives us perpendicularity!
-                septum_angle = effective_orientation
-                septum_line = self.draw_centered_line(
-                    self.sample_size,
-                    (cell.center_row, cell.center_col),
-                    length=cell.minor_axis * 2,  # Width of the cell
-                    angle_deg=np.rad2deg(septum_angle) + 90,
-                    value=1,
-                )
-                # Create a mask that removes the center portion
-                # Gap decreases linearly: starts at full width, ends at 0
-                gap_length = cell.minor_axis * 2 * (1 - p2_progression)
-                if gap_length > 0:
-                    center_gap = self.draw_centered_line(
-                        self.sample_size,
-                        (cell.center_row, cell.center_col),
-                        length=gap_length,
-                        angle_deg=np.rad2deg(septum_angle) + 90,
-                        value=1,
-                    )
-                    # Septum is full line minus the gap
-                    # Use proper masking to avoid isolated pixels
-                    septum_mask = np.logical_and(
-                        septum_line, ~center_gap.astype(bool)
-                    )
-                    septum_mask = septum_mask.astype(np.float32) * cell_mask
-                else:
-                    # Fully closed septum
-                    septum_mask = septum_line * cell_mask
-                # Make septum thicker than membrane (3 dilations)
-                for i in range(2):
-                    septum_mask = binary_dilation(septum_mask)
-                mask += septum_mask
-            elif cell.progression >= (cell.p1 + cell.p2):
-                # Closed septum (p3 phase) - full line across the minor axis
-                # Use same angle as ellipse rotation (perpendicular due to coordinate system difference)
-                septum_angle = effective_orientation
-                septum_line = self.draw_centered_line(
-                    self.sample_size,
-                    (cell.center_row, cell.center_col),
-                    length=cell.minor_axis * 2,  # Full width across cell
-                    angle_deg=np.rad2deg(septum_angle) + 90,
-                    value=1,
-                )
-                # Mask to only keep septum inside the cell
-                septum_mask = septum_line * cell_mask
-                # Make septum thicker than membrane (3 dilations)
-                for i in range(2):
-                    septum_mask = binary_dilation(septum_mask)
-                mask += septum_mask
+            mask += membrane_mask + cyto_mask + septum_mask
 
-            mask += membrane_mask
-            if self.cyto_fluor > 0:
-                # Add cytoplasmic fluorescence
-                cyto_mask = cell_mask - membrane_mask
-                mask += cyto_mask * self.cyto_fluor  # Cytoplasm is dimmer
-        return mask
-
-    def draw_centered_line(
-        self, mask_shape, center, length, angle_deg, value=1
-    ):
-        """
-        Draws a centered line of a given length and orientation in a binary mask.
-
-        Parameters
-        ----------
-        mask_shape : tuple of int
-            Shape of the binary mask (height, width).
-        center : tuple of float
-            (y, x) coordinates of the line center.
-        length : float
-            Total length of the line.
-        angle_deg : float
-            Orientation of the line in degrees (0° = horizontal to the right, increasing counterclockwise).
-        value : int, optional
-            Pixel value to draw (default=1).
-
-        Returns
-        -------
-        mask : ndarray of uint8
-            Binary mask with the drawn line.
-        """
-        mask = np.zeros(mask_shape, dtype=np.uint8)
-        cy, cx = center
-
-        # Convert angle to radians
-        angle = np.deg2rad(angle_deg)
-
-        # Compute half-length vector
-        dy = (length / 2) * np.sin(angle)
-        dx = (length / 2) * np.cos(angle)
-
-        # Compute line endpoints
-        y0, x0 = int(round(cy - dy)), int(round(cx - dx))
-        y1, x1 = int(round(cy + dy)), int(round(cx + dx))
-
-        # Get line coordinates
-        rr, cc = line(y0, x0, y1, x1)
-
-        # Clip coordinates to mask boundaries
-        rr = np.clip(rr, 0, mask_shape[0] - 1)
-        cc = np.clip(cc, 0, mask_shape[1] - 1)
-
-        mask[rr, cc] = value
         return mask
 
     def resolve_all_collisions(self, max_iterations=10):
@@ -561,6 +444,120 @@ class StaphMembrane(object):
                 coordinates.append(point)
 
         return coordinates
+
+
+def draw_ellipse_with_axes(
+    membrane,
+    cyto,
+    septum,
+    cy,
+    cx,
+    major_axis_length,
+    minor_axis_length,
+    angle_deg=0,
+    septum_completion=1.0,
+    value_membrane=1,
+    value_cyto=0.5,
+    value_septum=2,
+    gaussian_sigma=1.5,
+):
+    """
+    Draws an ellipse and its axes on an existing NumPy array.
+    The septum (minor axis) appears from the edges inward based on septum_completion.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2D NumPy array on which to draw (modified in place).
+    major_axis_length : float
+        Total length of the major axis.
+    minor_axis_length : float
+        Total length of the minor axis.
+    angle_deg : float, optional
+        Rotation angle in degrees (counterclockwise).
+    septum_completion : float, optional
+        Fraction (0.0–1.0) controlling septum closure.
+        - 0.0: open (no septum drawn)
+        - 1.0: closed (full minor axis drawn)
+    value_ellipse : int or float, optional
+        Pixel value for the ellipse perimeter.
+    value_axis : int or float, optional
+        Pixel value for the axes (major & septum).
+
+    Returns
+    -------
+    image : np.ndarray
+        The modified image array with the ellipse and axes drawn.
+    """
+    # Clamp the septum fraction
+    septum_completion = np.clip(septum_completion, 0.0, 1.0)
+
+    # Semi-axis lengths
+    a = major_axis_length
+    b = minor_axis_length
+
+    # Draw ellipse perimeter
+    rr, cc = ellipse_perimeter(
+        cy,
+        cx,
+        int(b),
+        int(a),
+        orientation=np.deg2rad(angle_deg),
+        shape=membrane.shape,
+    )
+    tmp = np.zeros((membrane.shape), dtype=np.float32)
+    tmp[rr, cc] = 1
+    for i in range(4):
+        tmp = binary_dilation(tmp)
+    cyto[rr, cc] = 1
+    cyto = binary_fill_holes(cyto).astype(np.float32)
+    eroded = binary_erosion(cyto)
+    for i in range(4):
+        eroded = binary_erosion(eroded)
+    membrane = cyto - eroded
+    membrane = gaussian(
+        membrane, sigma=gaussian_sigma
+    )  # Smooth membrane appearance
+    membrane = membrane * value_membrane
+
+    # Rotation matrix
+    theta = np.deg2rad(angle_deg)
+    R = np.array(
+        [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    )
+
+    # Define axis endpoints in ellipse coordinates
+    minor_axis_endpoints = np.array([[0, -b], [0, b]])
+
+    # Apply rotation and translation to image coordinates
+    minor_rot = minor_axis_endpoints @ R.T + np.array([cx, cy])
+
+    # Draw septum (minor axis) — from edges inward
+    if septum_completion > 0:
+        inward_fraction = 1.0 - septum_completion
+        half_length = (minor_rot[1] - minor_rot[0]) / 2.0
+        midpoint = (minor_rot[1] + minor_rot[0]) / 2.0
+
+        inner_offset = half_length * inward_fraction
+        top_inner = midpoint - inner_offset
+        bottom_inner = midpoint + inner_offset
+
+        # Two line segments from edges to inner tips
+        segments = [(minor_rot[0], top_inner), (bottom_inner, minor_rot[1])]
+        for p0, p1 in segments:
+            rr, cc = line(int(p0[1]), int(p0[0]), int(p1[1]), int(p1[0]))
+            septum[rr, cc] = 1
+
+    septum = septum * (
+        ((septum > 0).astype(np.float32) - (tmp > 0).astype(np.float32)) > 0
+    )
+    for i in range(2):
+        septum = binary_dilation(septum)
+    cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
+    septum = gaussian(septum, sigma=gaussian_sigma)  # Smooth septum appearance
+    septum = septum * value_septum
+    cyto = cyto * value_cyto
+    return membrane, cyto, septum
 
 
 @dataclass
