@@ -50,8 +50,10 @@ class StaphMembrane(object):
         cell_size_std: float = 0.05,
         p1_rate: int = 42,
         p2_rate: int = 29,
-        p3_rate: int = 29
+        p3_rate: int = 29,
         progression_rate: int = 2,
+        cyto_fluor: float = 0.4,
+        axis_ratio: float = 1.6,
     ):
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
@@ -59,10 +61,12 @@ class StaphMembrane(object):
         self.cell_size_std = self.cell_size * cell_size_std
         self.p1_rate = p1_rate
         self.p2_rate = p2_rate
-        self.axis_ratio = 1.6
+        self.p3_rate = p3_rate
+        self.axis_ratio = axis_ratio
         self.progression_rate = progression_rate  # percentage points per frame, 2 equals roughly 1 minute of real time
         self.cells = self.create_cells(n_objects)
         self.max_label = n_objects - 1
+        self.cyto_fluor = cyto_fluor
 
     def create_cells(self, n_objects):
         """
@@ -157,13 +161,26 @@ class StaphMembrane(object):
         # Now render ALL cells (including newly created daughter cells)
         for cell_id, cell in self.cells.items():
             cell_mask = np.zeros(self.sample_size).astype(np.float32)
+
+            # ellipse() parameters: (r_radius, c_radius, rotation)
+            # r_radius = extent in ROW direction (vertical in image)
+            # c_radius = extent in COLUMN direction (horizontal in image)
+            # rotation = angle to rotate the ellipse
+            #
+            # We want: major_axis along orientation direction
+            # Pass major in r_radius (row/vertical), minor in c_radius (column/horizontal)
+            # Then rotate by orientation to align with specified direction
+            r_radius = cell.major_axis
+            c_radius = cell.minor_axis
+            effective_orientation = cell.orientation
+
             rr, cc = ellipse(
                 cell.center_row,
                 cell.center_col,
-                cell.major_axis,
-                cell.minor_axis,
+                r_radius,
+                c_radius,
                 shape=(self.sample_size[0], self.sample_size[1]),
-                rotation=cell.orientation,
+                rotation=effective_orientation,
             )
             cell_mask[rr, cc] = 1
             eroded = binary_erosion(cell_mask)
@@ -177,12 +194,17 @@ class StaphMembrane(object):
             ):
                 # Growing septum (p2 phase) - grows from edges to center
                 p2_progression = (cell.progression - cell.p1) / cell.p2
-                # Draw full line across the cell
+                # Draw septum perpendicular to major axis
+                # NOTE: ellipse rotation and line angle use different conventions:
+                # ellipse(rotation=0) -> major axis vertical
+                # draw_line(angle=0) -> line horizontal
+                # Therefore, using the same angle value gives us perpendicularity!
+                septum_angle = effective_orientation
                 septum_line = self.draw_centered_line(
                     self.sample_size,
                     (cell.center_row, cell.center_col),
-                    length=cell.minor_axis * 2,  # Full length
-                    angle_deg=np.rad2deg(cell.orientation) + 90,
+                    length=cell.minor_axis * 2,  # Width of the cell
+                    angle_deg=np.rad2deg(septum_angle) + 90,
                     value=1,
                 )
                 # Create a mask that removes the center portion
@@ -193,11 +215,15 @@ class StaphMembrane(object):
                         self.sample_size,
                         (cell.center_row, cell.center_col),
                         length=gap_length,
-                        angle_deg=np.rad2deg(cell.orientation) + 90,
+                        angle_deg=np.rad2deg(septum_angle) + 90,
                         value=1,
                     )
                     # Septum is full line minus the gap
-                    septum_mask = (septum_line - center_gap) * cell_mask
+                    # Use proper masking to avoid isolated pixels
+                    septum_mask = np.logical_and(
+                        septum_line, ~center_gap.astype(bool)
+                    )
+                    septum_mask = septum_mask.astype(np.float32) * cell_mask
                 else:
                     # Fully closed septum
                     septum_mask = septum_line * cell_mask
@@ -207,11 +233,13 @@ class StaphMembrane(object):
                 mask += septum_mask
             elif cell.progression >= (cell.p1 + cell.p2):
                 # Closed septum (p3 phase) - full line across the minor axis
+                # Use same angle as ellipse rotation (perpendicular due to coordinate system difference)
+                septum_angle = effective_orientation
                 septum_line = self.draw_centered_line(
                     self.sample_size,
                     (cell.center_row, cell.center_col),
-                    length=cell.minor_axis * 2,  # Full length across cell
-                    angle_deg=np.rad2deg(cell.orientation) + 90,
+                    length=cell.minor_axis * 2,  # Full width across cell
+                    angle_deg=np.rad2deg(septum_angle) + 90,
                     value=1,
                 )
                 # Mask to only keep septum inside the cell
@@ -222,6 +250,10 @@ class StaphMembrane(object):
                 mask += septum_mask
 
             mask += membrane_mask
+            if self.cyto_fluor > 0:
+                # Add cytoplasmic fluorescence
+                cyto_mask = cell_mask - membrane_mask
+                mask += cyto_mask * self.cyto_fluor  # Cytoplasm is dimmer
         return mask
 
     def draw_centered_line(
