@@ -41,6 +41,9 @@ class mAIcroscopySandbox(object):
         fov_size: np.array = [300, 300],
         laser_intensity: float = 100000,
         pixel_size: float = 100,
+        sigma: float = 1.0,
+        sigma_std: float = 0.01,
+        gaussian_sigma: float = 2.0,
     ):
         self.stage_size = stage_size
         self.bleaching = np.ones(stage_size).astype(np.float32)
@@ -51,12 +54,12 @@ class mAIcroscopySandbox(object):
         self.wavelenght = 600
         self.wavelenght_std = 50
         self.NA = 1.2
-        self.sigma = 1
-        self.sigma_std = 0.01
+        self.sigma = sigma
+        self.sigma_std = sigma_std
         self.ADC_per_photon_conversion = 1.0
         self.ADC_offset = 100.0
         self.readout_noise = 50.0
-        self.gaussian_sigma = 2.0
+        self.gaussian_sigma = gaussian_sigma
 
     def load_sample(self, sample: Sample, acquire: bool = False):
         """
