@@ -179,8 +179,7 @@ class StaphMembrane(object):
                 septum_completion=sep_completion,
                 value_membrane=1,
                 value_cyto=self.cyto_fluor,
-                value_septum=2,
-                gaussian_sigma=1,
+                value_septum=1,
             )
 
             mask += membrane_mask + cyto_mask + septum_mask
@@ -212,7 +211,9 @@ class StaphMembrane(object):
                     distance = np.sqrt(dx**2 + dy**2)
 
                     # Minimum safe distance (sum of major axes)
-                    min_safe_distance = cell_a.major_axis + cell_b.major_axis
+                    min_safe_distance = (
+                        cell_a.major_axis + cell_b.major_axis + 1
+                    )
 
                     # Check for collision
                     if distance < min_safe_distance and distance > 0:
@@ -459,7 +460,6 @@ def draw_ellipse_with_axes(
     value_membrane=1,
     value_cyto=0.5,
     value_septum=2,
-    gaussian_sigma=1.5,
 ):
     """
     Draws an ellipse and its axes on an existing NumPy array.
@@ -515,9 +515,6 @@ def draw_ellipse_with_axes(
     for i in range(4):
         eroded = binary_erosion(eroded)
     membrane = cyto - eroded
-    membrane = gaussian(
-        membrane, sigma=gaussian_sigma
-    )  # Smooth membrane appearance
     membrane = membrane * value_membrane
 
     # Rotation matrix
@@ -554,7 +551,6 @@ def draw_ellipse_with_axes(
     for i in range(2):
         septum = binary_dilation(septum)
     cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
-    septum = gaussian(septum, sigma=gaussian_sigma)  # Smooth septum appearance
     septum = septum * value_septum
     cyto = cyto * value_cyto
     return membrane, cyto, septum
