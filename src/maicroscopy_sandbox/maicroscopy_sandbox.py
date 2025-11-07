@@ -44,6 +44,7 @@ class mAIcroscopySandbox(object):
         sigma: float = 1.0,
         sigma_std: float = 0.01,
         gaussian_sigma: float = 2.0,
+        output_dtype: str = "int16",
     ):
         self.stage_size = stage_size
         self.bleaching = np.ones(stage_size).astype(np.float32)
@@ -60,6 +61,7 @@ class mAIcroscopySandbox(object):
         self.ADC_offset = 100.0
         self.readout_noise = 50.0
         self.gaussian_sigma = gaussian_sigma
+        self.output_dtype = output_dtype
 
     def load_sample(self, sample: Sample, acquire: bool = False):
         """
@@ -135,6 +137,29 @@ class mAIcroscopySandbox(object):
             laser_power = 0
         self.laser_power = laser_power
 
+    def get_dtype(self, dtype_name: str = "int16"):
+        """
+        Get the numpy data type corresponding to the given name.
+
+        Parameters
+        ----------
+        dtype_name : str, default="int16"
+            Name of the desired data type.
+
+        Returns
+        -------
+        np.dtype
+            Corresponding numpy data type.
+        """
+        dtype_mapping = {
+            "int8": np.int8,
+            "int16": np.int16,
+            "int32": np.int32,
+            "float32": np.float32,
+            "float64": np.float64,
+        }
+        return dtype_mapping.get(dtype_name, np.int16)
+
     def acquire_image(self):
         """
         Acquire a fluorescence image at the current stage position.
@@ -178,7 +203,7 @@ class mAIcroscopySandbox(object):
         )
         self.bleaching[self.bleaching < 0] = 0
 
-        return frame
+        return frame.astype(self.get_dtype(self.output_dtype))
 
     def set_wavelenght(self, wavelenght: float = 600.0):
         """Set excitation wavelength in nanometers."""
