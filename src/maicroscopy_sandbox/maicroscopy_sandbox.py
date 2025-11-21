@@ -1,3 +1,4 @@
+from typing import Optional
 import numpy as np
 import warnings
 
@@ -45,6 +46,7 @@ class mAIcroscopySandbox(object):
         sigma_std: float = 0.01,
         gaussian_sigma: float = 2.0,
         output_dtype: str = "int16",
+        random_seed: Optional[int] = None,
     ):
         self.stage_size = stage_size
         self.bleaching = np.ones(stage_size).astype(np.float32)
@@ -62,6 +64,7 @@ class mAIcroscopySandbox(object):
         self.readout_noise = 50.0
         self.gaussian_sigma = gaussian_sigma
         self.output_dtype = output_dtype
+        self.random_seed = random_seed
 
     def load_sample(self, sample: Sample, acquire: bool = False):
         """
@@ -79,6 +82,9 @@ class mAIcroscopySandbox(object):
         np.ndarray or None
             Acquired image if acquire=True, otherwise None.
         """
+
+        if self.random_seed is not None:
+            np.random.seed(self.random_seed)
 
         print(f"Loading sample of size: {sample.sample_size}")
         self.bleaching = np.ones(sample.sample_size).astype(np.float32)
@@ -172,7 +178,8 @@ class mAIcroscopySandbox(object):
         np.ndarray
             Simulated fluorescence image with noise and bleaching effects.
         """
-
+        if self.random_seed is not None:
+            np.random.seed(self.random_seed)
         sample_mask = self.sample.generate_mask()
 
         row_start = self.current_position[0] - self.fov_size[0] // 2
