@@ -1,5 +1,7 @@
 import math
 import numpy as np
+
+from .sample import Sample
 from dataclasses import dataclass
 from skimage.draw import ellipse, line, ellipse_perimeter
 from skimage.morphology import binary_erosion, binary_dilation
@@ -7,7 +9,7 @@ from skimage.filters import gaussian
 from scipy.ndimage import binary_fill_holes
 
 
-class StaphMembrane(object):
+class StaphMembrane(Sample):
     """
     Simulates bacterial cell membrane dynamics with cell division.
 
