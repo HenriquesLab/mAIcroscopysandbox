@@ -8,3 +8,4 @@ from .maicroscopy_sandbox import mAIcroscopySandbox
 from .samples.sample import Sample
 from .samples.ellipsoid import Ellipsoid
 from .smartSRRF import smartSRRF
+from .samples.staph import StaphMembrane
