@@ -15,9 +15,9 @@ def generate_image(
     sigma: float = 0.21,
     sigma_std: float = 0.01,
     ADC_per_photon_conversion: float = 1.0,
-    ADC_offset: float = 100.0,
+    ADC_offset: float = 0.0,
     readout_noise: float = 50.0,
-    gaussian_sigma: float = 5.0
+    gaussian_sigma: float = 5.0,
 ):
 
     y_locs, x_locs = np.nonzero(mask)
@@ -25,25 +25,25 @@ def generate_image(
         laser_intensity * 5, laser_intensity * 0.05, size=len(x_locs)
     )
     sigma = sigma * (wavelenght / 100) / NA
-    sigma_std = (
-        sigma * (wavelenght_std / 100) / NA
-    )
+    sigma_std = sigma * (wavelenght_std / 100) / NA
     sigma_array = np.random.normal(sigma, sigma_std, size=len(x_locs))
 
-    out = FromLoc2Image_MultiThreaded(
-                x_locs,
-                y_locs,
-                photon_array,
-                sigma_array,
-                mask.shape[0],
-                mask.shape[1],
-                1,
-                bleaching
-            ) * mask
+    out = (
+        FromLoc2Image_MultiThreaded(
+            x_locs,
+            y_locs,
+            photon_array,
+            sigma_array,
+            mask.shape[0],
+            mask.shape[1],
+            1,
+            bleaching,
+        )
+        * mask
+    )
     out = (
         ADC_per_photon_conversion * np.random.poisson(out)
-        + readout_noise
-        * np.random.normal(size=(mask.shape[0], mask.shape[1]))
+        + readout_noise * np.random.normal(size=(mask.shape[0], mask.shape[1]))
         + ADC_offset
     )
     out[out < 0] = 0
@@ -60,7 +60,7 @@ def FromLoc2Image_MultiThreaded(
     image_height: int,
     image_width: int,
     pixel_size: float,
-    bleaching: np.ndarray
+    bleaching: np.ndarray,
 ):
     """
     Generate an image from localized emitters using multi-threading.
@@ -104,7 +104,9 @@ def FromLoc2Image_MultiThreaded(
     for ij in prange(image_height * image_width):
         j = int(ij / image_width)
         i = ij - j * image_width
-        for xc, yc, photon, sigma in zip(xc_array, yc_array, photon_array, sigma_array):
+        for xc, yc, photon, sigma in zip(
+            xc_array, yc_array, photon_array, sigma_array
+        ):
             # Don't bother if the emitter has photons <= 0 or if Sigma <= 0
             if (photon > 0) and (sigma > 0):
                 S = sigma * math.sqrt(2)
@@ -116,7 +118,9 @@ def FromLoc2Image_MultiThreaded(
                 ) ** 2 < 16 * sigma**2:
                     ErfX = math.erf((x + pixel_size) / S) - math.erf(x / S)
                     ErfY = math.erf((y + pixel_size) / S) - math.erf(y / S)
-                    Image[j][i] += 0.25 * photon * ErfX * ErfY * bleaching[j][i]
+                    Image[j][i] += (
+                        0.25 * photon * ErfX * ErfY * bleaching[j][i]
+                    )
     return Image
 
 
