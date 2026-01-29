@@ -64,7 +64,8 @@ class mAIcroscopySandbox(object):
         self.readout_noise = 50.0
         self.gaussian_sigma = gaussian_sigma
         self.output_dtype = output_dtype
-        self.random_seed = random_seed
+        if random_seed is not None:
+            np.random.seed(random_seed)
 
     def load_sample(self, sample: Sample, acquire: bool = False):
         """
@@ -82,9 +83,6 @@ class mAIcroscopySandbox(object):
         np.ndarray or None
             Acquired image if acquire=True, otherwise None.
         """
-
-        if self.random_seed is not None:
-            np.random.seed(self.random_seed)
 
         print(f"Loading sample of size: {sample.sample_size}")
         self.bleaching = np.ones(sample.sample_size).astype(np.float32)
@@ -178,8 +176,6 @@ class mAIcroscopySandbox(object):
         np.ndarray
             Simulated fluorescence image with noise and bleaching effects.
         """
-        if self.random_seed is not None:
-            np.random.seed(self.random_seed)
         sample_mask = self.sample.generate_mask()
 
         row_start = self.current_position[0] - self.fov_size[0] // 2

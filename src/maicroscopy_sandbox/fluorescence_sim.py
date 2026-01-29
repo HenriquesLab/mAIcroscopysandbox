@@ -41,6 +41,7 @@ def generate_image(
         )
         * mask
     )
+    np.random.seed(None)
     out = (
         ADC_per_photon_conversion * np.random.poisson(out)
         + readout_noise * np.random.normal(size=(mask.shape[0], mask.shape[1]))
