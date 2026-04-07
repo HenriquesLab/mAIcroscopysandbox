@@ -3,7 +3,7 @@ import numpy as np
 
 from .sample import Sample
 from dataclasses import dataclass
-from skimage.draw import ellipse, line, ellipse_perimeter
+from skimage.draw import ellipse_perimeter
 from skimage.morphology import binary_erosion, binary_dilation
 from skimage.filters import gaussian
 from scipy.ndimage import binary_fill_holes
@@ -72,6 +72,31 @@ class StaphMembrane(Sample):
         self.max_label = n_objects - 1
         self.cyto_fluor = cyto_fluor
 
+    @staticmethod
+    def sample_septum_tilt_deg():
+        """
+        Sample a septum tilt relative to the image plane.
+
+        The distribution is biased toward near-perpendicular septa while
+        still allowing shallower orientations:
+        - 0-15 degrees: 5%
+        - 15-60 degrees: 55%
+        - 60-90 degrees: 40%
+        """
+        tilt_bucket = np.random.choice(
+            [0, 1, 2], p=[0.05, 0.55, 0.40]
+        )
+        if tilt_bucket == 0:
+            return np.random.uniform(0.0, 15.0)
+        if tilt_bucket == 1:
+            return np.random.uniform(15.0, 60.0)
+        return np.random.uniform(60.0, 90.0)
+
+    @staticmethod
+    def sample_septum_rotation_deg():
+        """Sample the in-plane orientation of the septum projection."""
+        return np.random.uniform(0.0, 180.0)
+
     def create_cells(self, n_objects):
         """
         Create multiple bacterial cells at random non-overlapping positions.
@@ -127,6 +152,8 @@ class StaphMembrane(Sample):
             length,
             cell_max_axis_ratio / (p1 + p3),
             np.random.randint(-math.pi, math.pi),
+            self.sample_septum_tilt_deg(),
+            self.sample_septum_rotation_deg(),
             p1,
             p2,
             p3,
@@ -167,7 +194,15 @@ class StaphMembrane(Sample):
             membrane_mask = np.zeros(self.sample_size).astype(np.float32)
             cyto_mask = np.zeros(self.sample_size).astype(np.float32)
             septum_mask = np.zeros(self.sample_size).astype(np.float32)
-            sep_completion = (cell.progression - cell.p1) / cell.p2
+            septum_phase = "none"
+            sep_completion = 0.0
+            if cell.progression >= cell.p1:
+                if cell.progression < (cell.p1 + cell.p2):
+                    septum_phase = "ring"
+                    sep_completion = (cell.progression - cell.p1) / cell.p2
+                elif cell.progression < 100:
+                    septum_phase = "closed"
+                    sep_completion = 1.0
 
             membrane_mask, cyto_mask, septum_mask = draw_ellipse_with_axes(
                 membrane_mask,
@@ -178,6 +213,9 @@ class StaphMembrane(Sample):
                 cell.major_axis,
                 cell.minor_axis,
                 angle_deg=np.rad2deg(cell.orientation),
+                septum_tilt_deg=cell.septum_tilt_deg,
+                septum_rotation_deg=cell.septum_rotation_deg,
+                septum_phase=septum_phase,
                 septum_completion=sep_completion,
                 value_membrane=1,
                 value_cyto=self.cyto_fluor,
@@ -458,14 +496,20 @@ def draw_ellipse_with_axes(
     major_axis_length,
     minor_axis_length,
     angle_deg=0,
+    septum_tilt_deg=90,
+    septum_rotation_deg=None,
+    septum_phase="ring",
     septum_completion=1.0,
     value_membrane=1,
     value_cyto=0.5,
     value_septum=2,
 ):
     """
-    Draws an ellipse and its axes on an existing NumPy array.
-    The septum (minor axis) appears from the edges inward based on septum_completion.
+    Draws an ellipse and a modeled septum on an existing NumPy array.
+
+    During phase 2, the septum is rendered as the projection of a closing
+    ring centered at midcell. During phase 3, the septum remains the
+    projected ring midcut, but in its fully closed state.
 
     Parameters
     ----------
@@ -477,10 +521,18 @@ def draw_ellipse_with_axes(
         Total length of the minor axis.
     angle_deg : float, optional
         Rotation angle in degrees (counterclockwise).
+    septum_tilt_deg : float, optional
+        Tilt of the septal ring relative to the image plane.
+        90 degrees gives the narrowest projected ring and 0 degrees the
+        broadest circular projection.
+    septum_rotation_deg : float, optional
+        In-plane rotation of the septum projection.
+    septum_phase : {"none", "ring", "closed"}, optional
+        Septum rendering mode based on the cell cycle phase.
     septum_completion : float, optional
-        Fraction (0.0–1.0) controlling septum closure.
-        - 0.0: open (no septum drawn)
-        - 1.0: closed (full minor axis drawn)
+        Fraction (0.0–1.0) controlling ring closure during phase 2.
+        - 0.0: wide open ring
+        - 1.0: fully closed thin ring
     value_ellipse : int or float, optional
         Pixel value for the ellipse perimeter.
     value_axis : int or float, optional
@@ -519,43 +571,115 @@ def draw_ellipse_with_axes(
     membrane = cyto - eroded
     membrane = membrane * value_membrane
 
-    # Rotation matrix
-    theta = np.deg2rad(angle_deg)
-    R = np.array(
-        [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+    # Draw the septum at midcell aligned with the cell minor axis.
+    septum = draw_projected_septum(
+        septum,
+        cy,
+        cx,
+        minor_axis_length,
+        septum_tilt_deg,
+        septum_rotation_deg,
+        septum_phase,
+        septum_completion,
     )
-
-    # Define axis endpoints in ellipse coordinates
-    minor_axis_endpoints = np.array([[0, -b], [0, b]])
-
-    # Apply rotation and translation to image coordinates
-    minor_rot = minor_axis_endpoints @ R.T + np.array([cx, cy])
-
-    # Draw septum (minor axis) — from edges inward
-    if septum_completion > 0:
-        inward_fraction = 1.0 - septum_completion
-        half_length = (minor_rot[1] - minor_rot[0]) / 2.0
-        midpoint = (minor_rot[1] + minor_rot[0]) / 2.0
-
-        inner_offset = half_length * inward_fraction
-        top_inner = midpoint - inner_offset
-        bottom_inner = midpoint + inner_offset
-
-        # Two line segments from edges to inner tips
-        segments = [(minor_rot[0], top_inner), (bottom_inner, minor_rot[1])]
-        for p0, p1 in segments:
-            rr, cc = line(int(p0[1]), int(p0[0]), int(p1[1]), int(p1[0]))
-            septum[rr, cc] = 1
 
     septum = septum * (
         ((septum > 0).astype(np.float32) - (tmp > 0).astype(np.float32)) > 0
     )
-    for i in range(2):
-        septum = binary_dilation(septum)
     cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
     septum = septum * value_septum
     cyto = cyto * value_cyto
     return membrane, cyto, septum
+
+
+def draw_projected_septum(
+    septum,
+    cy,
+    cx,
+    minor_axis_length,
+    septum_tilt_deg,
+    septum_rotation_deg,
+    septum_phase,
+    septum_completion,
+):
+    """
+    Draw the projected septum at midcell.
+
+    Phase 2 uses a projected outer circle minus a smaller projected inner
+    circle that shrinks as the cell progresses. Phase 3 keeps only the outer
+    circle. The rendered septum is the midsection cut through that shape.
+    """
+    if septum_phase == "none":
+        return septum
+
+    if septum_rotation_deg is None:
+        septum_rotation_deg = angle_deg + 90.0
+
+    theta = np.deg2rad(septum_rotation_deg)
+    tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
+
+    ring_radius = max(1.5, float(minor_axis_length) * 0.98)
+    projected_radius = max(0.6, ring_radius * np.cos(tilt_rad))
+    ring_band_thickness = max(0.85, ring_radius * 0.22)
+    max_inner_radius = max(0.5, ring_radius - ring_band_thickness)
+    max_inner_projected = max(
+        0.35, projected_radius - max(0.35, ring_band_thickness)
+    )
+    min_phase2_inner_radius = 0.55
+    min_phase2_inner_projected = 0.36
+    # Keep near-perpendicular septa visibly thick and taper the slice so
+    # the ends preserve the curvature of the projected ring.
+    cut_half_thickness = max(
+        ring_band_thickness * (0.55 + 0.28 * np.sin(tilt_rad)),
+        projected_radius * 0.24,
+        0.9,
+    )
+
+    pad = int(np.ceil(max(ring_radius, projected_radius))) + 4
+    row_min = max(0, int(cy) - pad)
+    row_max = min(septum.shape[0], int(cy) + pad + 1)
+    col_min = max(0, int(cx) - pad)
+    col_max = min(septum.shape[1], int(cx) + pad + 1)
+
+    rows, cols = np.mgrid[row_min:row_max, col_min:col_max]
+    dy = rows - cy
+    dx = cols - cx
+
+    u = dx * np.cos(theta) + dy * np.sin(theta)
+    v = -dx * np.sin(theta) + dy * np.cos(theta)
+
+    outer = (u / ring_radius) ** 2 + (v / projected_radius) ** 2 <= 1.0
+    if septum_phase == "ring":
+        septum_completion = np.clip(septum_completion, 0.0, 1.0)
+        inner_radius = max(
+            min_phase2_inner_radius,
+            max_inner_radius * (1.0 - septum_completion),
+        )
+        inner_projected = max(
+            min_phase2_inner_projected,
+            max_inner_projected * (1.0 - septum_completion),
+        )
+    else:
+        inner_radius = 0.0
+        inner_projected = 0.0
+
+    if inner_radius > 0.5 and inner_projected > 0.35:
+        inner = (
+            (u / inner_radius) ** 2 + (v / inner_projected) ** 2 <= 1.0
+        )
+        septum_shape = outer & ~inner
+    else:
+        septum_shape = outer
+
+    taper = np.sqrt(np.clip(1.0 - (u / max(ring_radius, 1e-6)) ** 2, 0.0, 1.0))
+    local_cut_half_thickness = np.maximum(
+        ring_band_thickness * 0.35, cut_half_thickness * taper
+    )
+    midcut = np.abs(v) <= local_cut_half_thickness
+    local_mask = septum_shape & midcut
+
+    septum[row_min:row_max, col_min:col_max][local_mask] = 1
+    return septum
 
 
 @dataclass
@@ -577,6 +701,10 @@ class Cell:
         Growth rate of major axis per frame.
     orientation : int
         Cell orientation angle in radians.
+    septum_tilt_deg : float
+        Tilt of the septal ring relative to the image plane.
+    septum_rotation_deg : float
+        In-plane rotation of the septum projection.
     p1 : int
         Percentage of cycle for growth phase.
     p2 : int
@@ -593,6 +721,8 @@ class Cell:
     minor_axis: int
     max_axis_increase: float
     orientation: int
+    septum_tilt_deg: float
+    septum_rotation_deg: float
     p1: int
     p2: int
     p3: int
