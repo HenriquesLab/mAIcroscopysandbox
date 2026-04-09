@@ -3,6 +3,15 @@ from tifffile import imread
 
 
 class BinarySample(object):
+    """Sample backed by a binary TIFF image.
+
+    Args:
+        img_path: Path to the binary image on disk.
+        sample_size: Sample dimensions in pixels as ``[height, width]``.
+        bleaching_rate: Per-frame bleaching rate.
+        movement_rate: Characteristic movement distance in pixels.
+        movement_probability: Probability of movement per frame.
+    """
 
     def __init__(
         self,
@@ -21,8 +30,14 @@ class BinarySample(object):
         self.generate_mask()
 
     def generate_mask(self):
+        """Load the image and convert it to a binary mask.
+
+        Returns:
+            A boolean mask derived from the TIFF image.
+        """
         binary = imread(self.img_path)
         return binary > 0
 
     def calculate_dynamics(self):
+        """Binary samples are static, so there is no per-frame dynamics."""
         pass

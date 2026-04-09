@@ -5,13 +5,18 @@
 
 A Python package for simulating realistic fluorescence microscopy experiments with biological samples. Perfect for testing super-resolution algorithms, training AI models, and teaching microscopy concepts.
 
+For installation, usage, and contribution instructions, see:
+
+- [INSTALL.md](INSTALL.md)
+- [USAGE.md](USAGE.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## Features
 
 - 🔬 **Realistic Microscopy Simulation**: Accurate modeling of photon noise, bleaching, and detector characteristics
 - 🦠 **Bacterial Cell Dynamics**: Simulate *Staphylococcus*-like cells with growth, septum formation, and division
 - 📸 **Stage Control**: Move and scan across large samples with precise positioning
 - 🔆 **Laser Control**: Adjustable laser power with realistic photobleaching effects
-- 🎯 **Super-Resolution Ready**: Built-in smartSRRF implementation for super-resolution imaging
 - 🧪 **Extensible**: Easy to create custom sample types and imaging modalities
 
 ## Table of Contents
@@ -22,7 +27,6 @@ A Python package for simulating realistic fluorescence microscopy experiments wi
   - [Basic Microscopy Simulation](#basic-microscopy-simulation)
   - [Bacterial Cell Simulation](#bacterial-cell-simulation)
   - [Time-Lapse Imaging](#time-lapse-imaging)
-  - [Super-Resolution Imaging](#super-resolution-imaging)
 - [API Reference](#api-reference)
 - [Advanced Usage](#advanced-usage)
 - [Contributing](#contributing)
@@ -53,14 +57,22 @@ pip install -e .
 pip install -e ".[dev,test]"
 ```
 
+### Local CI
+
+Run the same lint, test, coverage, and build checks used by the automation:
+
+```bash
+./scripts/run_ci_locally.sh
+```
+
 ### Dependencies
 
 The package automatically installs the following dependencies:
 - `numpy<2` - Numerical computing
 - `scikit-image` - Image processing
 - `numba` - JIT compilation for performance
-- `nanopyx` - Advanced microscopy algorithms
-- `matplotlib` - Visualization (for examples)
+- `scipy` - Morphology and filtering utilities
+- `tifffile` - Binary sample loading and TIFF export
 
 ## Quick Start
 
@@ -213,34 +225,6 @@ plt.tight_layout()
 plt.show()
 ```
 
-### Super-Resolution Imaging
-
-Apply super-resolution reconstruction using smartSRRF:
-
-```python
-from maicroscopy_sandbox import mAIcroscopySandbox, smartSRRF
-from maicroscopy_sandbox.samples.staph import StaphMembrane
-
-# Create microscope and sample
-microscope = mAIcroscopySandbox(fov_size=[500, 500], laser_intensity=1000)
-sample = StaphMembrane(
-    sample_size=microscope.stage_size,
-    n_objects=5,
-    pixel_size=30
-)
-
-microscope.set_laser_power(100)
-microscope.load_sample(sample)
-
-# Perform super-resolution reconstruction
-sr_image = smartSRRF(microscope, plot=True)
-
-# The smartSRRF function will:
-# 1. Acquire multiple frames
-# 2. Perform SRRF reconstruction
-# 3. Display comparison plot
-```
-
 ## API Reference
 
 ### mAIcroscopySandbox
@@ -363,25 +347,32 @@ tifffile.imwrite("timelapse.tif", stack)
 
 ```
 mAIcroscopysandbox/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── publish.yml
 ├── src/
 │   └── maicroscopy_sandbox/
 │       ├── __init__.py
 │       ├── maicroscopy_sandbox.py    # Main microscope class
 │       ├── fluorescence_sim.py       # Image generation
-│       ├── smartSRRF.py             # Super-resolution
 │       └── samples/
 │           ├── __init__.py
 │           ├── sample.py            # Base sample class
 │           ├── staph.py             # Bacterial cells
 │           ├── ellipsoid.py         # Simple ellipsoids
 │           └── binary.py            # Binary structures
+├── scripts/
+│   ├── run_ci_locally.sh
+│   └── release_to_pypi.sh
 ├── notebooks/
 │   ├── example_usage.ipynb          # Usage examples
 │   └── example_from_binary.ipynb    # Binary sample demo
 ├── tests/
 │   └── test_maicroscopy_sandbox.py
+├── noxfile.py
+├── Makefile
 ├── README.md
-├── setup.cfg
 ├── pyproject.toml
 └── LICENSE.txt
 ```
@@ -409,12 +400,27 @@ pip install -e ".[dev,test]"
 # Run tests
 pytest
 
+# Or run the full local CI flow
+./scripts/run_ci_locally.sh
+
 # Run linter
 ruff check src/
 
 # Format code
 ruff format src/
 ```
+
+### Release Automation
+
+- GitHub Actions CI lives in `.github/workflows/ci.yml`
+- PyPI publishing lives in `.github/workflows/publish.yml`
+- Local release validation and optional upload lives in:
+
+```bash
+./scripts/release_to_pypi.sh
+```
+
+If `PYPI_TOKEN` is unset, the script stops after test, build, and distribution validation.
 
 ## Citation
 
@@ -437,7 +443,7 @@ This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.t
 ## Acknowledgments
 
 - Developed at the Henriques Lab
-- Built on scikit-image, numpy, and nanopyx
+- Built on scikit-image, scipy, and numpy
 - Inspired by real microscopy workflows and challenges
 
 ## Contact

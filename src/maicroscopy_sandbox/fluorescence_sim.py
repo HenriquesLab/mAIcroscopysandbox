@@ -1,7 +1,7 @@
 import math
 import numpy as np
 
-from numba import njit, prange
+from numba import njit
 from skimage.filters import gaussian
 
 
@@ -19,6 +19,25 @@ def generate_image(
     readout_noise: float = 50.0,
     gaussian_sigma: float = 5.0,
 ):
+    """Generate a simulated fluorescence frame from a binary mask.
+
+    Args:
+        mask: Binary mask of active fluorophores.
+        bleaching: Per-pixel bleaching map for the same region.
+        laser_intensity: Maximum laser intensity in photons per pixel.
+        wavelenght: Excitation wavelength in nanometers.
+        wavelenght_std: Excitation wavelength standard deviation.
+        NA: Objective numerical aperture.
+        sigma: Mean fluorophore emission spread.
+        sigma_std: Standard deviation of the emission spread.
+        ADC_per_photon_conversion: Photon-to-ADU conversion factor.
+        ADC_offset: Detector baseline offset.
+        readout_noise: Detector noise standard deviation.
+        gaussian_sigma: Gaussian blur applied at the end of the pipeline.
+
+    Returns:
+        A floating-point fluorescence image.
+    """
 
     y_locs, x_locs = np.nonzero(mask)
     photon_array = np.random.normal(
@@ -37,6 +56,7 @@ def generate_image(
             mask.shape[0],
             mask.shape[1],
             1,
+            mask,
             bleaching,
         )
         * mask
@@ -52,7 +72,7 @@ def generate_image(
     return out
 
 
-@njit(parallel=True)
+@njit
 def FromLoc2Image_MultiThreaded(
     xc_array: np.ndarray,
     yc_array: np.ndarray,
@@ -61,62 +81,67 @@ def FromLoc2Image_MultiThreaded(
     image_height: int,
     image_width: int,
     pixel_size: float,
+    mask: np.ndarray,
     bleaching: np.ndarray,
 ):
-    """
-    Generate an image from localized emitters using multi-threading.
+    """Accumulate emitter contributions into an image grid.
 
-    Parameters
-    ----------
-    xc_array : array_like
-        Array of x-coordinates of the emitters.
-    yc_array : array_like
-        Array of y-coordinates of the emitters.
-    photon_array : array_like
-        Array of photon counts for each emitter.
-    sigma_array : array_like
-        Array of standard deviations (sigmas) for each emitter.
-    image_height : int
-        Height of the output image in pixels.
-    image_width : int
-        Width of the output image in pixels.
-    pixel_size : float
-        Size of each pixel in the image.
+    Args:
+        xc_array: X coordinates of emitters.
+        yc_array: Y coordinates of emitters.
+        photon_array: Photon counts for each emitter.
+        sigma_array: Standard deviations for each emitter.
+        image_height: Output image height in pixels.
+        image_width: Output image width in pixels.
+        pixel_size: Pixel size in the simulation grid.
+        mask: Binary mask indicating pixels that should receive signal.
+        bleaching: Per-pixel bleaching map.
 
-    Returns
-    -------
-    Image : ndarray
-        2D array representing the generated image.
-
-    Notes
-    -----
-    The function utilizes multi-threading for parallel processing using Numba's
-    `njit` decorator with `parallel=True`. Emitters with non-positive photon
-    counts or non-positive sigma values are ignored. Only emitters within a
-    distance of 4 sigma from the center of the pixel are considered to save
-    computation time.
-
-    The calculation involves error functions (`erf`) to determine the contribution
-    of each emitter to the pixel intensity.
-
-    Originally from: https://colab.research.google.com/github/HenriquesLab/ZeroCostDL4Mic/blob/master/Colab_notebooks/Deep-STORM_2D_ZeroCostDL4Mic.ipynb
+    Returns:
+        A 2D NumPy array with the simulated emitter contributions.
     """
     Image = np.zeros((image_height, image_width))
-    for ij in prange(image_height * image_width):
-        j = int(ij / image_width)
-        i = ij - j * image_width
-        for xc, yc, photon, sigma in zip(
-            xc_array, yc_array, photon_array, sigma_array
-        ):
-            # Don't bother if the emitter has photons <= 0 or if Sigma <= 0
-            if (photon > 0) and (sigma > 0):
-                S = sigma * math.sqrt(2)
+    half_pixel = pixel_size / 2.0
+
+    for emitter_idx in range(len(xc_array)):
+        xc = xc_array[emitter_idx]
+        yc = yc_array[emitter_idx]
+        photon = photon_array[emitter_idx]
+        sigma = sigma_array[emitter_idx]
+
+        # Don't bother if the emitter has photons <= 0 or if Sigma <= 0
+        if (photon <= 0) or (sigma <= 0):
+            continue
+
+        S = sigma * math.sqrt(2.0)
+        support_radius = 4.0 * sigma
+
+        min_i = int(math.ceil((xc - support_radius - half_pixel) / pixel_size))
+        max_i = int(math.floor((xc + support_radius - half_pixel) / pixel_size))
+        min_j = int(math.ceil((yc - support_radius - half_pixel) / pixel_size))
+        max_j = int(math.floor((yc + support_radius - half_pixel) / pixel_size))
+
+        if min_i < 0:
+            min_i = 0
+        if min_j < 0:
+            min_j = 0
+        if max_i >= image_width:
+            max_i = image_width - 1
+        if max_j >= image_height:
+            max_j = image_height - 1
+
+        for j in range(min_j, max_j + 1):
+            y = j * pixel_size - yc
+            y_center = y + half_pixel
+            for i in range(min_i, max_i + 1):
+                if mask[j][i] <= 0:
+                    continue
+
                 x = i * pixel_size - xc
-                y = j * pixel_size - yc
-                # Don't bother if the emitter is further than 4 sigma from the centre of the pixel
-                if (x + pixel_size / 2) ** 2 + (
-                    y + pixel_size / 2
-                ) ** 2 < 16 * sigma**2:
+                x_center = x + half_pixel
+
+                # Preserve the original distance gate exactly.
+                if x_center * x_center + y_center * y_center < 16.0 * sigma**2:
                     ErfX = math.erf((x + pixel_size) / S) - math.erf(x / S)
                     ErfY = math.erf((y + pixel_size) / S) - math.erf(y / S)
                     Image[j][i] += (
@@ -126,28 +151,14 @@ def FromLoc2Image_MultiThreaded(
 
 
 def binary2locs(img: np.ndarray, density: float):
-    """
-    Selects a subset of locations from a binary image based on a specified density.
+    """Return a random subset of ``1`` pixels from a binary image.
 
-    Parameters
-    ----------
-    img : np.ndarray
-        2D binary image array where 1s indicate points of interest.
-    density : float
-        Proportion of points to randomly select from the points of interest.
-        Should be a value between 0 and 1.
+    Args:
+        img: Binary image containing candidate pixels.
+        density: Fraction of active pixels to sample.
 
-    Returns
-    -------
-    filtered_locs : tuple of np.ndarray
-        Tuple containing two arrays. The first array contains the row indices
-        and the second array contains the column indices of the selected points.
-
-    Notes
-    -----
-    The function identifies all locations in the binary image where the value is 1.
-    It then randomly selects a subset of these locations based on the specified
-    density and returns their coordinates.
+    Returns:
+        Row and column index arrays for the selected pixels.
     """
     all_locs = np.nonzero(img == 1)
     n_points = int(len(all_locs[0]) * density)

@@ -2,27 +2,16 @@ import numpy as np
 
 
 class Sample(object):
-    """
-    Base class for microscopy sample simulation.
+    """Base class for synthetic microscopy samples.
 
-    Provides basic structure for samples with fluorescence, bleaching,
-    and movement dynamics.
+    Args:
+        sample_size: Sample dimensions in pixels as ``[height, width]``.
+        bleaching_rate: Per-frame bleaching rate.
+        movement_rate: Characteristic movement distance in pixels.
+        movement_probability: Probability of movement per frame.
 
-    Parameters
-    ----------
-    sample_size : np.array, default=[1000, 1000]
-        Size of the sample area in pixels [height, width].
-    bleaching_rate : float, default=0.001
-        Rate of fluorophore bleaching per frame.
-    movement_rate : float, default=10.0
-        Characteristic distance of fluorophore movement.
-    movement_probability : float, default=0.1
-        Probability of fluorophore movement per frame.
-
-    Attributes
-    ----------
-    morphological_params : dict or None
-        Optional parameters for sample morphology.
+    Attributes:
+        morphological_params: Optional morphology parameters for subclasses.
     """
 
     def __init__(
@@ -40,21 +29,17 @@ class Sample(object):
         self.generate_mask()
 
     def generate_mask(self):
-        """
-        Generate fluorescence mask for the sample.
+        """Generate a default binary fluorophore mask.
 
-        Returns
-        -------
-        np.ndarray
-            Binary mask with random fluorophore distribution.
+        Returns:
+            A ``float32`` binary mask with a deterministic random pattern.
         """
         np.random.seed(0)
         return np.random.random(self.sample_size).astype(np.float32) > 0.8
 
     def calculate_dynamics(self):
-        """
-        Update sample dynamics (movement, bleaching, etc.).
+        """Update sample dynamics.
 
-        To be implemented by subclasses.
+        Subclasses override this to advance their own state between frames.
         """
         pass

@@ -5,44 +5,30 @@ from .sample import Sample
 from dataclasses import dataclass
 from skimage.draw import ellipse_perimeter
 from skimage.morphology import binary_erosion, binary_dilation
-from skimage.filters import gaussian
 from scipy.ndimage import binary_fill_holes
+
+ELLIPSE_MORPHOLOGY_PADDING = 8
 
 
 class StaphMembrane(Sample):
-    """
-    Simulates bacterial cell membrane dynamics with cell division.
+    """Staphylococcus-like sample with growth, septation, and division.
 
-    This class models the growth, septum formation, and division of
-    Staphylococcus-like bacterial cells. Cells progress through three
-    phases (p1: growth, p2: septum formation, p3: pre-division) before
-    dividing into two daughter cells.
+    Args:
+        sample_size: Sample dimensions in pixels as ``[height, width]``.
+        bleaching_rate: Per-frame bleaching rate.
+        n_objects: Number of initial cells.
+        pixel_size: Pixel size in nanometers.
+        cell_size_std: Standard deviation of cell size as a fraction of mean.
+        p1_rate: Mean percentage spent in the growth phase.
+        p2_rate: Mean percentage spent in septum formation.
+        p3_rate: Mean percentage spent in the pre-division phase.
+        progression_rate: Cell-cycle progression per frame in percentage points.
+        cyto_fluor: Fluorescence intensity used for the cytoplasm.
+        axis_ratio: Mean ratio between major and minor axes.
 
-    Parameters
-    ----------
-    sample_size : np.array, default=[1000, 1000]
-        Size of the sample area in pixels [height, width].
-    bleaching_rate : float, default=0.001
-        Rate of fluorophore bleaching per frame.
-    n_objects : int, default=1
-        Initial number of bacterial cells to create.
-    pixel_size : int, default=100
-        Size of one pixel in nanometers.
-    cell_size_std : float, default=0.05
-        Standard deviation of cell size as fraction of mean size.
-    p1_rate : int, default=42
-        Mean percentage of cell cycle spent in growth phase.
-    p2_rate : int, default=29
-        Mean percentage of cell cycle spent in septum formation.
-    progression_rate : int, default=2
-        Progression percentage points per frame (2 ≈ 1 minute real time).
-
-    Attributes
-    ----------
-    cells : dict
-        Dictionary of Cell objects indexed by cell ID.
-    max_label : int
-        Maximum cell ID used for tracking.
+    Attributes:
+        cells: Dictionary of ``Cell`` instances keyed by cell ID.
+        max_label: Highest cell ID currently assigned.
     """
 
     def __init__(
@@ -74,14 +60,10 @@ class StaphMembrane(Sample):
 
     @staticmethod
     def sample_septum_tilt_deg():
-        """
-        Sample a septum tilt relative to the image plane.
+        """Sample a septum tilt relative to the image plane.
 
-        The distribution is biased toward near-perpendicular septa while
-        still allowing shallower orientations:
-        - 0-15 degrees: 5%
-        - 15-60 degrees: 55%
-        - 60-90 degrees: 40%
+        Returns:
+            A tilt angle in degrees.
         """
         tilt_bucket = np.random.choice(
             [0, 1, 2], p=[0.05, 0.55, 0.40]
@@ -94,22 +76,21 @@ class StaphMembrane(Sample):
 
     @staticmethod
     def sample_septum_rotation_deg():
-        """Sample the in-plane orientation of the septum projection."""
-        return np.random.uniform(0.0, 180.0)
+        """Sample a small in-plane deviation around the cell minor axis.
+
+        Returns:
+            A rotation offset in degrees.
+        """
+        return np.random.uniform(-20.0, 20.0)
 
     def create_cells(self, n_objects):
-        """
-        Create multiple bacterial cells at random non-overlapping positions.
+        """Create the initial population of bacterial cells.
 
-        Parameters
-        ----------
-        n_objects : int
-            Number of cells to create.
+        Args:
+            n_objects: Number of cells to generate.
 
-        Returns
-        -------
-        dict
-            Dictionary of Cell objects indexed by integer IDs.
+        Returns:
+            A dictionary of cell IDs mapped to ``Cell`` instances.
         """
         cells = {}
         coordinates = self.generate_random_coordinates(
@@ -123,18 +104,14 @@ class StaphMembrane(Sample):
         return cells
 
     def create_cell(self, coordinates, progression: int = None):
-        """
-        Create a single bacterial cell with random properties.
+        """Create a single bacterial cell at ``coordinates``.
 
-        Parameters
-        ----------
-        coordinates : tuple
-            (row, col) position for cell center.
+        Args:
+            coordinates: ``(row, col)`` location for the new cell.
+            progression: Optional initial cell-cycle progression.
 
-        Returns
-        -------
-        Cell
-            New cell object with randomized size, orientation, and phase rates.
+        Returns:
+            A configured ``Cell`` instance.
         """
         length = np.random.normal(self.cell_size, self.cell_size_std)
         cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.05)
@@ -163,19 +140,12 @@ class StaphMembrane(Sample):
         return cell
 
     def generate_mask(self):
-        """
-        Generate fluorescence mask showing all cells with membranes and septa.
+        """Generate the current fluorescence mask for the sample.
 
-        Updates cell dynamics (growth, septum formation, division), resolves
-        collisions, and renders all cells including membranes and septa based
-        on their current progression phase.
-
-        Returns
-        -------
-        np.ndarray
-            2D array of fluorescence intensities for the sample.
+        Returns:
+            A ``float32`` mask containing the rendered cells.
         """
-        mask = np.zeros(self.sample_size).astype(np.float32)
+        mask = np.zeros(self.sample_size, dtype=np.float32)
 
         # First, update dynamics for all cells
         # Create a list of cell_ids to avoid dictionary change during iteration
@@ -191,9 +161,6 @@ class StaphMembrane(Sample):
 
         # Now render ALL cells (including newly created daughter cells)
         for cell_id, cell in self.cells.items():
-            membrane_mask = np.zeros(self.sample_size).astype(np.float32)
-            cyto_mask = np.zeros(self.sample_size).astype(np.float32)
-            septum_mask = np.zeros(self.sample_size).astype(np.float32)
             septum_phase = "none"
             sep_completion = 0.0
             if cell.progression >= cell.p1:
@@ -204,32 +171,70 @@ class StaphMembrane(Sample):
                     septum_phase = "closed"
                     sep_completion = 1.0
 
-            membrane_mask, cyto_mask, septum_mask = draw_ellipse_with_axes(
-                membrane_mask,
-                cyto_mask,
-                septum_mask,
-                cell.center_row,
-                cell.center_col,
-                cell.major_axis,
-                cell.minor_axis,
-                angle_deg=np.rad2deg(cell.orientation),
-                septum_tilt_deg=cell.septum_tilt_deg,
-                septum_rotation_deg=cell.septum_rotation_deg,
+            self._render_cell_into_mask(
+                mask,
+                cell,
                 septum_phase=septum_phase,
                 septum_completion=sep_completion,
-                value_membrane=1,
-                value_cyto=self.cyto_fluor,
-                value_septum=1,
             )
-
-            mask += membrane_mask + cyto_mask + septum_mask
 
         return mask
 
-    def resolve_all_collisions(self, max_iterations=10):
+    def _render_cell_into_mask(
+        self,
+        mask: np.ndarray,
+        cell,
+        septum_phase: str,
+        septum_completion: float,
+    ) -> None:
+        """Render a single cell into the target mask.
+
+        Args:
+            mask: Full-size output mask to update.
+            cell: Cell instance to render.
+            septum_phase: Septum state for the current cell-cycle phase.
+            septum_completion: Fraction of septum completion in the ring phase.
         """
-        Iteratively resolve all cell collisions by pushing overlapping cells
-        apart along the vector between their centers.
+        row_slice, col_slice, local_row, local_col = _cell_render_roi(
+            self.sample_size,
+            cell.center_row,
+            cell.center_col,
+            cell.major_axis,
+            cell.minor_axis,
+        )
+        local_shape = (
+            row_slice.stop - row_slice.start,
+            col_slice.stop - col_slice.start,
+        )
+        membrane_mask = np.zeros(local_shape, dtype=np.float32)
+        cyto_mask = np.zeros(local_shape, dtype=np.float32)
+        septum_mask = np.zeros(local_shape, dtype=np.float32)
+
+        membrane_mask, cyto_mask, septum_mask = draw_ellipse_with_axes(
+            membrane_mask,
+            cyto_mask,
+            septum_mask,
+            local_row,
+            local_col,
+            cell.major_axis,
+            cell.minor_axis,
+            angle_deg=np.rad2deg(cell.orientation),
+            septum_tilt_deg=cell.septum_tilt_deg,
+            septum_rotation_deg=cell.septum_rotation_deg,
+            septum_phase=septum_phase,
+            septum_completion=septum_completion,
+            value_membrane=1,
+            value_cyto=self.cyto_fluor,
+            value_septum=1,
+        )
+
+        mask[row_slice, col_slice] += membrane_mask + cyto_mask + septum_mask
+
+    def resolve_all_collisions(self, max_iterations=10):
+        """Resolve overlaps by pushing cells apart along the center vector.
+
+        Args:
+            max_iterations: Maximum number of collision-resolution passes.
         """
         for iteration in range(max_iterations):
             collisions_found = False
@@ -292,16 +297,11 @@ class StaphMembrane(Sample):
                 break
 
     def calculate_dynamics(self, cell_or_id, rate=2):
-        """
-        Update cell progression and trigger division if needed.
+        """Advance cell progression and divide when the cycle completes.
 
-        Advances cell through growth phases (p1, p2, p3) and triggers
-        cell division when progression reaches 100.
-
-        Parameters
-        ----------
-        cell_or_id : Cell or int
-            Either a Cell object or cell ID from self.cells dictionary.
+        Args:
+            cell_or_id: ``Cell`` instance or integer cell ID.
+            rate: Number of progression steps to advance.
         """
         # Accept either a Cell object or a cell_id
         if isinstance(cell_or_id, Cell):
@@ -323,22 +323,10 @@ class StaphMembrane(Sample):
                 break
 
     def divide_cell(self, cell_id):
-        """
-        Split a cell into two daughter cells along its major axis.
+        """Split one cell into two daughter cells.
 
-        Creates two daughter cells positioned along the parent's major axis,
-        rotated 90 degrees from parent orientation. Handles collision
-        detection and pushes neighbors away if needed.
-
-        Parameters
-        ----------
-        cell_id : int
-            ID of the parent cell to divide.
-
-        Notes
-        -----
-        The parent cell is deleted and replaced with two daughters at
-        cell IDs (max_id + 1) and (max_id + 2).
+        Args:
+            cell_id: ID of the parent cell to divide.
         """
         parent_cell = self.cells[cell_id]
 
@@ -452,22 +440,15 @@ class StaphMembrane(Sample):
         self.max_label = max_id
 
     def generate_random_coordinates(self, shape, spacing, num_points):
-        """
-        Generate random non-overlapping coordinates for cell placement.
+        """Generate non-overlapping cell center coordinates.
 
-        Parameters
-        ----------
-        shape : tuple
-            (height, width) of the sample area.
-        spacing : float
-            Minimum distance between cell centers.
-        num_points : int
-            Number of coordinates to generate.
+        Args:
+            shape: Output shape used for sampling.
+            spacing: Minimum allowed distance between coordinates.
+            num_points: Number of coordinates to generate.
 
-        Returns
-        -------
-        list
-            List of (row, col) tuples for cell positions.
+        Returns:
+            A list of ``(row, col)`` coordinates.
         """
         coordinates = [(self.sample_size[0] // 2, self.sample_size[1] // 2)]
         while len(coordinates) < num_points:
@@ -504,44 +485,10 @@ def draw_ellipse_with_axes(
     value_cyto=0.5,
     value_septum=2,
 ):
-    """
-    Draws an ellipse and a modeled septum on an existing NumPy array.
+    """Draw the cell membrane, cytoplasm, and septum into image arrays.
 
-    During phase 2, the septum is rendered as the projection of a closing
-    ring centered at midcell. During phase 3, the septum remains the
-    projected ring midcut, but in its fully closed state.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        2D NumPy array on which to draw (modified in place).
-    major_axis_length : float
-        Total length of the major axis.
-    minor_axis_length : float
-        Total length of the minor axis.
-    angle_deg : float, optional
-        Rotation angle in degrees (counterclockwise).
-    septum_tilt_deg : float, optional
-        Tilt of the septal ring relative to the image plane.
-        90 degrees gives the narrowest projected ring and 0 degrees the
-        broadest circular projection.
-    septum_rotation_deg : float, optional
-        In-plane rotation of the septum projection.
-    septum_phase : {"none", "ring", "closed"}, optional
-        Septum rendering mode based on the cell cycle phase.
-    septum_completion : float, optional
-        Fraction (0.0–1.0) controlling ring closure during phase 2.
-        - 0.0: wide open ring
-        - 1.0: fully closed thin ring
-    value_ellipse : int or float, optional
-        Pixel value for the ellipse perimeter.
-    value_axis : int or float, optional
-        Pixel value for the axes (major & septum).
-
-    Returns
-    -------
-    image : np.ndarray
-        The modified image array with the ellipse and axes drawn.
+    Returns:
+        Three arrays representing the membrane, cytoplasm, and septum.
     """
     # Clamp the septum fraction
     septum_completion = np.clip(septum_completion, 0.0, 1.0)
@@ -576,6 +523,7 @@ def draw_ellipse_with_axes(
         septum,
         cy,
         cx,
+        angle_deg,
         minor_axis_length,
         septum_tilt_deg,
         septum_rotation_deg,
@@ -583,39 +531,59 @@ def draw_ellipse_with_axes(
         septum_completion,
     )
 
-    septum = septum * (
-        ((septum > 0).astype(np.float32) - (tmp > 0).astype(np.float32)) > 0
-    )
+    septum = septum * (cyto > 0).astype(np.float32)
     cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
     septum = septum * value_septum
     cyto = cyto * value_cyto
     return membrane, cyto, septum
 
 
+def _cell_render_roi(
+    sample_size,
+    center_row,
+    center_col,
+    major_axis_length,
+    minor_axis_length,
+):
+    pad = (
+        int(np.ceil(max(major_axis_length, minor_axis_length)))
+        + ELLIPSE_MORPHOLOGY_PADDING
+    )
+    row_min = max(0, int(center_row) - pad)
+    row_max = min(sample_size[0], int(center_row) + pad + 1)
+    col_min = max(0, int(center_col) - pad)
+    col_max = min(sample_size[1], int(center_col) + pad + 1)
+
+    row_slice = slice(row_min, row_max)
+    col_slice = slice(col_min, col_max)
+    local_row = center_row - row_min
+    local_col = center_col - col_min
+    return row_slice, col_slice, local_row, local_col
+
+
 def draw_projected_septum(
     septum,
     cy,
     cx,
+    cell_angle_deg,
     minor_axis_length,
     septum_tilt_deg,
     septum_rotation_deg,
     septum_phase,
     septum_completion,
 ):
-    """
-    Draw the projected septum at midcell.
+    """Draw the projected septum aligned with the cell's minor axis.
 
-    Phase 2 uses a projected outer circle minus a smaller projected inner
-    circle that shrinks as the cell progresses. Phase 3 keeps only the outer
-    circle. The rendered septum is the midsection cut through that shape.
+    Returns:
+        The septum array with the projected septum rendered into it.
     """
     if septum_phase == "none":
         return septum
 
     if septum_rotation_deg is None:
-        septum_rotation_deg = angle_deg + 90.0
+        septum_rotation_deg = 0.0
 
-    theta = np.deg2rad(septum_rotation_deg)
+    theta = np.deg2rad(cell_angle_deg + 90.0 + septum_rotation_deg)
     tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
 
     ring_radius = max(1.5, float(minor_axis_length) * 0.98)
@@ -684,36 +652,7 @@ def draw_projected_septum(
 
 @dataclass
 class Cell:
-    """
-    Data class representing a single bacterial cell.
-
-    Attributes
-    ----------
-    center_row : int
-        Row position of cell center in pixels.
-    center_col : int
-        Column position of cell center in pixels.
-    major_axis : int
-        Length of cell major axis in pixels.
-    minor_axis : int
-        Length of cell minor axis in pixels.
-    max_axis_increase : float
-        Growth rate of major axis per frame.
-    orientation : int
-        Cell orientation angle in radians.
-    septum_tilt_deg : float
-        Tilt of the septal ring relative to the image plane.
-    septum_rotation_deg : float
-        In-plane rotation of the septum projection.
-    p1 : int
-        Percentage of cycle for growth phase.
-    p2 : int
-        Percentage of cycle for septum formation.
-    p3 : int
-        Percentage of cycle for pre-division phase.
-    progression : int
-        Current progression through cell cycle (0-100).
-    """
+    """State for a single simulated bacterial cell."""
 
     center_row: int
     center_col: int

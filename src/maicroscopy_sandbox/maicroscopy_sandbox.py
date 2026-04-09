@@ -5,35 +5,25 @@ import warnings
 from .fluorescence_sim import generate_image
 from .samples.sample import Sample
 
-from matplotlib import pyplot as plt
-
 
 class mAIcroscopySandbox(object):
-    """
-    Simulated fluorescence microscope with realistic imaging parameters.
+    """Virtual fluorescence microscope with configurable optics and noise.
 
-    Provides a virtual microscopy environment with stage control, laser
-    illumination, photobleaching, and detector noise characteristics.
+    Args:
+        stage_size: Stage dimensions in pixels as ``[height, width]``.
+        fov_size: Field-of-view dimensions in pixels as ``[height, width]``.
+        laser_intensity: Maximum laser intensity in photons per pixel.
+        pixel_size: Physical pixel size in nanometers.
+        sigma: Mean fluorophore emission spread.
+        sigma_std: Standard deviation of fluorophore emission spread.
+        gaussian_sigma: Gaussian blur sigma for the point-spread function.
+        output_dtype: Numpy dtype name used for the returned image.
+        random_seed: Optional RNG seed for reproducible simulations.
 
-    Parameters
-    ----------
-    stage_size : np.array, default=[5000, 5000]
-        Size of the microscope stage in pixels [height, width].
-    fov_size : np.array, default=[300, 300]
-        Field of view size in pixels [height, width].
-    laser_intensity : float, default=100000
-        Maximum laser intensity in photons per pixel.
-    pixel_size : float, default=100
-        Physical size of one pixel in nanometers.
-
-    Attributes
-    ----------
-    current_position : list
-        Current stage position [row, col].
-    laser_power : float
-        Current laser power as percentage (0-100).
-    sample : Sample
-        Currently loaded sample object.
+    Attributes:
+        current_position: Current stage position as ``[row, col]``.
+        laser_power: Current laser power as a percentage.
+        sample: Currently loaded sample instance.
     """
 
     def __init__(
@@ -68,20 +58,14 @@ class mAIcroscopySandbox(object):
             np.random.seed(random_seed)
 
     def load_sample(self, sample: Sample, acquire: bool = False):
-        """
-        Load a sample onto the microscope stage.
+        """Load a sample onto the stage.
 
-        Parameters
-        ----------
-        sample : Sample
-            Sample object to load.
-        acquire : bool, default=False
-            If True, acquire an image immediately after loading.
+        Args:
+            sample: Sample object to load.
+            acquire: If ``True``, acquire an image immediately.
 
-        Returns
-        -------
-        np.ndarray or None
-            Acquired image if acquire=True, otherwise None.
+        Returns:
+            The acquired frame when ``acquire`` is ``True``; otherwise ``None``.
         """
 
         print(f"Loading sample of size: {sample.sample_size}")
@@ -99,20 +83,14 @@ class mAIcroscopySandbox(object):
             return self.acquire_image()
 
     def move_stage(self, movement: np.array = [0, 0], acquire: bool = False):
-        """
-        Move the microscope stage by specified offset.
+        """Move the stage by an offset in pixels.
 
-        Parameters
-        ----------
-        movement : np.array, default=[0, 0]
-            Movement offset in pixels [row_delta, col_delta].
-        acquire : bool, default=False
-            If True, acquire an image after moving.
+        Args:
+            movement: Offset as ``[row_delta, col_delta]``.
+            acquire: If ``True``, acquire an image after moving.
 
-        Returns
-        -------
-        np.ndarray or None
-            Acquired image if acquire=True, otherwise None.
+        Returns:
+            The acquired frame when ``acquire`` is ``True``; otherwise ``None``.
         """
         movement = self._check_move_stage(movement)
         self.current_position[0] += movement[0]
@@ -127,13 +105,10 @@ class mAIcroscopySandbox(object):
             print(f"Stage Moved to position: {self.current_position}")
 
     def set_laser_power(self, laser_power: float = 100.0):
-        """
-        Set the laser power percentage.
+        """Set laser power as a percentage.
 
-        Parameters
-        ----------
-        laser_power : float, default=100.0
-            Laser power as percentage (0-100), clamped to valid range.
+        Args:
+            laser_power: Requested laser power percentage.
         """
         if laser_power > 100.0:
             laser_power = 100.0
@@ -142,18 +117,13 @@ class mAIcroscopySandbox(object):
         self.laser_power = laser_power
 
     def get_dtype(self, dtype_name: str = "int16"):
-        """
-        Get the numpy data type corresponding to the given name.
+        """Return the NumPy dtype matching ``dtype_name``.
 
-        Parameters
-        ----------
-        dtype_name : str, default="int16"
-            Name of the desired data type.
+        Args:
+            dtype_name: String key such as ``"int16"`` or ``"float32"``.
 
-        Returns
-        -------
-        np.dtype
-            Corresponding numpy data type.
+        Returns:
+            The matching NumPy dtype, or ``np.int16`` when unknown.
         """
         dtype_mapping = {
             "int8": np.int8,
@@ -165,16 +135,10 @@ class mAIcroscopySandbox(object):
         return dtype_mapping.get(dtype_name, np.int16)
 
     def acquire_image(self):
-        """
-        Acquire a fluorescence image at the current stage position.
+        """Acquire a fluorescence frame at the current stage position.
 
-        Generates an image with realistic photon noise, bleaching, detector
-        noise, and Gaussian blur based on microscope parameters.
-
-        Returns
-        -------
-        np.ndarray
-            Simulated fluorescence image with noise and bleaching effects.
+        Returns:
+            The simulated frame converted to the configured output dtype.
         """
         sample_mask = self.sample.generate_mask()
 
@@ -209,41 +173,77 @@ class mAIcroscopySandbox(object):
         return frame.astype(self.get_dtype(self.output_dtype))
 
     def set_wavelenght(self, wavelenght: float = 600.0):
-        """Set excitation wavelength in nanometers."""
+        """Set the excitation wavelength in nanometers.
+
+        Args:
+            wavelenght: Excitation wavelength in nanometers.
+        """
         self.wavelenght = wavelenght
 
     def set_wavelenght_std(self, wavelenght_std: float = 50.0):
-        """Set standard deviation of wavelength in nanometers."""
+        """Set the wavelength standard deviation in nanometers.
+
+        Args:
+            wavelenght_std: Standard deviation for excitation wavelength.
+        """
         self.wavelenght_std = wavelenght_std
 
     def set_NA(self, NA: float = 1.2):
-        """Set numerical aperture of the objective."""
+        """Set the objective numerical aperture.
+
+        Args:
+            NA: Objective numerical aperture.
+        """
         self.NA = NA
 
     def set_sigma(self, sigma: float = 0.21):
-        """Set mean fluorophore emission standard deviation."""
+        """Set the mean fluorophore emission spread.
+
+        Args:
+            sigma: Mean fluorophore emission spread.
+        """
         self.sigma = sigma
 
     def set_sigma_std(self, sigma_std: float = 0.01):
-        """Set standard deviation of fluorophore emission."""
+        """Set the fluorophore emission spread standard deviation.
+
+        Args:
+            sigma_std: Standard deviation of the fluorophore spread.
+        """
         self.sigma_std = sigma_std
 
     def set_ADC_per_photon_conversion(
         self, ADC_per_photon_conversion: float = 1.0
     ):
-        """Set analog-to-digital conversion factor (ADC units per photon)."""
+        """Set the analog-to-digital conversion factor.
+
+        Args:
+            ADC_per_photon_conversion: Conversion factor from photons to ADU.
+        """
         self.ADC_per_photon_conversion = ADC_per_photon_conversion
 
     def set_ADC_offset(self, ADC_offset: float = 100.0):
-        """Set baseline ADC offset value."""
+        """Set the detector baseline offset.
+
+        Args:
+            ADC_offset: Additive detector baseline in ADU.
+        """
         self.ADC_offset = ADC_offset
 
     def set_readout_noise(self, readout_noise: float = 50.0):
-        """Set camera readout noise standard deviation in ADC units."""
+        """Set the camera readout noise standard deviation.
+
+        Args:
+            readout_noise: Standard deviation of the detector noise.
+        """
         self.readout_noise = readout_noise
 
     def set_gaussian_sigma(self, gaussian_sigma: float = 5.0):
-        """Set Gaussian blur sigma for point spread function."""
+        """Set the Gaussian blur sigma used for the point-spread function.
+
+        Args:
+            gaussian_sigma: Standard deviation of the PSF blur kernel.
+        """
         self.gaussian_sigma = gaussian_sigma
 
     def _check_sample(self):

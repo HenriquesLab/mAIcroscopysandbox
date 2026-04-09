@@ -4,10 +4,24 @@ from dataclasses import dataclass
 from skimage.draw import ellipse
 from skimage.morphology import binary_erosion
 
-from .sample import Sample
-
 
 class Ellipsoid(object):
+    """Simple ellipsoid sample with optional motion and deformation.
+
+    Args:
+        sample_size: Sample dimensions in pixels as ``[height, width]``.
+        bleaching_rate: Per-frame bleaching rate.
+        movement_rate: Expected per-frame movement distance.
+        movement_probability: Probability of movement per frame.
+        rotation: Rotation spread for dynamic updates.
+        rotation_probability: Probability of rotation per frame.
+        axis_deformation_rate: Fractional axis deformation per update.
+        axis_deformation_probability: Probability of axis deformation.
+        n_objects: Number of ellipsoids to initialize.
+        cell_size: Mean major axis length.
+        cell_size_std: Standard deviation of the major axis length.
+        mode: ``"Full"`` for filled objects or ``"Edges"`` for outlines.
+    """
     def __init__(
         self,
         sample_size: np.array = [1000, 1000],
@@ -23,24 +37,6 @@ class Ellipsoid(object):
         cell_size_std: float = 5,
         mode: str = "Full",
     ):
-        """
-        Parameters
-        ----------
-        sample_size : tuple, optional
-            The size of the sample as a tuple of two integers. The default is (1000, 1000).
-        bleaching_rate : float, optional
-            The rate of bleaching per frame as a float. The default is 0.001.
-        movement_rate : float, optional
-            The rate of movement per frame as a float. The default is 10.0.
-        movement_probability : float, optional
-            The probability of movement per frame as a float. The default is 0.1.
-        rotation : int, optional
-            The rotation of the ellipsoid in degrees as an integer. The default is 0.
-        n_ojects : int, optional
-            The number of objects in the sample as an integer. The default is 1.
-        mode : str, optional
-            The mode of the sample, either "Full" or "Edges". The default is "Full".
-        """
         self.sample_size = sample_size
         self.movement_probability = movement_probability
         self.bleaching_rate = bleaching_rate
@@ -56,6 +52,7 @@ class Ellipsoid(object):
         self.cells = self.create_cells(n_objects)
 
     def create_cells(self, n_objects):
+        """Create the initial set of ellipsoids."""
         cells = []
         coordinates = self.generate_random_coordinates(
             (self.sample_size[0], self.sample_size[1]), self.cell_size * 2, n_objects
@@ -74,6 +71,11 @@ class Ellipsoid(object):
         return cells
 
     def generate_mask(self):
+        """Generate the current ellipsoid mask.
+
+        Returns:
+            A ``float32`` mask with ellipsoid pixels set to one.
+        """
         self.calculate_dynamics()
         mask = np.zeros(self.sample_size).astype(np.float32)
         for cell in self.cells:
@@ -95,6 +97,7 @@ class Ellipsoid(object):
             return mask
 
     def calculate_dynamics(self):
+        """Advance ellipsoid motion, rotation, and axis deformation."""
         for cell in self.cells:
             if np.random.rand() < self.movement_probability:
                 cell.center_row += np.random.normal(0, self.movement_rate)
@@ -106,6 +109,16 @@ class Ellipsoid(object):
                 cell.minor_axis += cell.minor_axis*self.axis_deformation_rate
 
     def generate_random_coordinates(self, shape, spacing, num_points):
+        """Sample non-overlapping coordinates within ``shape``.
+
+        Args:
+            shape: Output shape used to sample valid coordinates.
+            spacing: Minimum allowed distance between coordinates.
+            num_points: Number of coordinates to generate.
+
+        Returns:
+            A list of ``(row, col)`` coordinates.
+        """
         coordinates = [(self.sample_size[0] // 2, self.sample_size[1] // 2)]
         while len(coordinates) < num_points:
             # Generate a random point

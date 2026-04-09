@@ -1,22 +1,32 @@
-# Directories
+# Python cache and tooling
 __pycache__/
+*.py[cod]
 .venv/
 .ruff_cache/
+.pytest_cache/
+.nox/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Packaging and build artifacts
 dist/
 build/
-data/
 *.egg-info/
-
-# Files
-.DS_Store
+coverage.xml
 .coverage
-__pycache__
-poetry.lock
+htmlcov/
+
+# Local machine files
+.DS_Store
+
+# Project-specific generated data
+data/
 output.txt
-dist
+poetry.lock
 *.gz
 *.cif
 *_ignore_*
 *.tif
 *.gif
 *.avi
+t.py

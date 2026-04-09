@@ -1,55 +1,44 @@
-.PHONY: help install lint format pytest mypy mypy-types docs download-structures
+.PHONY: help install install-dev test lint format build check-dist ci release-local
+
+PYTHON ?= python3
 
 help:
 	@echo "Available commands:"
-	@echo "  install                    Install source code in environment"
-	@echo "  install-editable           Install source code in environment in editable mode"
-	@echo "  install-all                Install source code in environment and all dependencies"
-	@echo "  install-editable-all       Install source code in environment and all dependencies in editable mode"
-	@echo "  lint                       Run linters using pre-commit"
-	@echo "  format                     Run formatters using pre-commit"
-	@echo "  pytest                     Run tests using pytest"
-	@echo "  mypy                       Run type-checking using mypy"
-	@echo "  mypy-types                 Install missing types using mypy"
-	@echo "  docs                       Generate documentation using pdoc"
-	@echo "  download-structures        Run supramolsim.download:download_suggested_structures"
-	@echo "  package                    Builds python package"
+	@echo "  install       Install the package"
+	@echo "  install-dev   Install package with dev and test dependencies"
+	@echo "  test          Run pytest with coverage"
+	@echo "  lint          Run ruff"
+	@echo "  format        Format code with ruff"
+	@echo "  build         Build source and wheel distributions"
+	@echo "  check-dist    Validate built distributions with twine"
+	@echo "  ci            Run the local CI pipeline"
+	@echo "  release-local Build and optionally upload to PyPI using env vars"
 
 install:
-	pip install .
+	$(PYTHON) -m pip install .
 
-install-editable:
-	pip install --editable .
+install-dev:
+	$(PYTHON) -m pip install -e ".[dev,test]"
 
-install-all:
-	pip install ".[dev, test]"
-
-install-editable-all:
-	pip install --editable ".[dev, test]"
+test:
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLCONFIGDIR=/tmp/mpl XDG_CACHE_HOME=/tmp/xdg $(PYTHON) -m pytest
 
 lint:
-	pre-commit run ruff --all-files
+	$(PYTHON) -m ruff check .
 
 format:
-	pre-commit run ruff-format --all-files
+	$(PYTHON) -m ruff format .
 
-pytest:
-	pytest --cov=academic_knowledge_miner_database
+build:
+	$(PYTHON) -m build --no-isolation
 
-mypy:
-	mypy --ignore-missing-imports src
+check-dist:
+	$(PYTHON) -m twine check dist/*
 
-mypy-types:
-	mypy --install-types
+ci:
+	./scripts/run_ci_locally.sh
 
-docs:
-	rm -rf docs
-	pdoc src/academic_knowledge_miner_database -o docs
-
-download-structures:
-	download-structures
+release-local:
+	./scripts/release_to_pypi.sh
 
 .DEFAULT_GOAL := help
-
-package:
-	python -m build
