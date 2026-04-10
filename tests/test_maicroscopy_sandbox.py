@@ -212,6 +212,36 @@ def test_near_perpendicular_septum_keeps_visible_thickness():
     assert min(height, width) >= 2
 
 
+def test_phase_1_cell_major_axis_matches_pixel_size_scaling():
+    np.random.seed(11)
+    pixel_size = 50
+    sample = StaphMembrane(
+        sample_size=[128, 128],
+        n_objects=1,
+        pixel_size=pixel_size,
+        cell_size_std=0,
+        progression_rate=0,
+        axis_ratio=1.0,
+    )
+    cell = next(iter(sample.cells.values()))
+    cell.progression = 0
+    cell.p1 = 100
+    cell.p2 = 0
+    cell.p3 = 0
+    cell.major_axis = sample.cell_size
+    cell.minor_axis = sample.cell_size
+    cell.orientation = 0
+    cell.center_row = 64
+    cell.center_col = 64
+
+    mask = sample.generate_mask()
+    _, cols = np.where(mask > 0)
+    rendered_major_axis = cols.max() - cols.min() + 1
+    expected_major_axis = 1000 / pixel_size
+
+    assert abs(rendered_major_axis - expected_major_axis) <= 2
+
+
 def test_package_import_works_without_optional_sr_feature():
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     completed = subprocess.run(

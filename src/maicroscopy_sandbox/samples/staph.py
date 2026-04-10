@@ -47,7 +47,7 @@ class StaphMembrane(Sample):
     ):
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
-        self.cell_size = 1000 // pixel_size
+        self.cell_size = 1200 / pixel_size
         self.cell_size_std = self.cell_size * cell_size_std
         self.p1_rate = p1_rate
         self.p2_rate = p2_rate
@@ -66,7 +66,7 @@ class StaphMembrane(Sample):
             A tilt angle in degrees.
         """
         tilt_bucket = np.random.choice(
-            [0, 1, 2], p=[0.05, 0.55, 0.40]
+            [0, 1, 2], p=[0.05, 0.40, 0.55]
         )
         if tilt_bucket == 0:
             return np.random.uniform(0.0, 15.0)
@@ -257,7 +257,7 @@ class StaphMembrane(Sample):
 
                     # Minimum safe distance (sum of major axes)
                     min_safe_distance = (
-                        cell_a.major_axis + cell_b.major_axis + 1
+                        (cell_a.major_axis + cell_b.major_axis) / 2 + 1
                     )
 
                     # Check for collision
@@ -403,7 +403,7 @@ class StaphMembrane(Sample):
 
                 # Minimum safe distance (sum of major axes)
                 min_safe_distance = (
-                    daughter.major_axis + neighbor_cell.major_axis
+                    (daughter.major_axis + neighbor_cell.major_axis) / 2
                 )
 
                 # If cells overlap, push them apart
@@ -493,9 +493,10 @@ def draw_ellipse_with_axes(
     # Clamp the septum fraction
     septum_completion = np.clip(septum_completion, 0.0, 1.0)
 
-    # Semi-axis lengths
-    a = major_axis_length
-    b = minor_axis_length
+    # ``ellipse_perimeter`` expects semi-axis lengths, while the sample stores
+    # full axis lengths in pixels.
+    a = _axis_length_to_semi_axis(major_axis_length)
+    b = _axis_length_to_semi_axis(minor_axis_length)
 
     # Draw ellipse perimeter
     rr, cc = ellipse_perimeter(
@@ -546,7 +547,14 @@ def _cell_render_roi(
     minor_axis_length,
 ):
     pad = (
-        int(np.ceil(max(major_axis_length, minor_axis_length)))
+        int(
+            np.ceil(
+                max(
+                    _axis_length_to_semi_axis(major_axis_length),
+                    _axis_length_to_semi_axis(minor_axis_length),
+                )
+            )
+        )
         + ELLIPSE_MORPHOLOGY_PADDING
     )
     row_min = max(0, int(center_row) - pad)
@@ -586,7 +594,9 @@ def draw_projected_septum(
     theta = np.deg2rad(cell_angle_deg + 90.0 + septum_rotation_deg)
     tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
 
-    ring_radius = max(1.5, float(minor_axis_length) * 0.98)
+    ring_radius = max(
+        1.5, _axis_length_to_semi_axis(float(minor_axis_length)) * 0.98
+    )
     projected_radius = max(0.6, ring_radius * np.cos(tilt_rad))
     ring_band_thickness = max(0.85, ring_radius * 0.22)
     max_inner_radius = max(0.5, ring_radius - ring_band_thickness)
@@ -648,6 +658,11 @@ def draw_projected_septum(
 
     septum[row_min:row_max, col_min:col_max][local_mask] = 1
     return septum
+
+
+def _axis_length_to_semi_axis(axis_length):
+    """Convert a full axis length in pixels to the semi-axis used by skimage."""
+    return max(1.0, float(axis_length) / 2.0)
 
 
 @dataclass
