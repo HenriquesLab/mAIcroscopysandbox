@@ -18,7 +18,8 @@ class StaphMembrane(Sample):
         bleaching_rate: Per-frame bleaching rate.
         n_objects: Number of initial cells.
         pixel_size: Pixel size in nanometers.
-        cell_size_std: Standard deviation of cell size as a fraction of mean.
+        cell_size: Mean cell size in nanometers, used for scaling other parameters and generating initial coordinates.
+        cell_size_std: Variation of cell size as a fraction of the mean cell size (0-1). #TODO - change this var name to reflect that it's for a uniform distribution.
         p1_rate: Mean percentage spent in the growth phase.
         p2_rate: Mean percentage spent in septum formation.
         p3_rate: Mean percentage spent in the pre-division phase.
@@ -37,6 +38,7 @@ class StaphMembrane(Sample):
         bleaching_rate: float = 0.001,
         n_objects: int = 1,
         pixel_size: int = 100,
+        cell_size: int = 1200,
         cell_size_std: float = 0.05,
         p1_rate: int = 42,
         p2_rate: int = 29,
@@ -47,8 +49,9 @@ class StaphMembrane(Sample):
     ):
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
-        self.cell_size = 1200 / pixel_size
-        self.cell_size_std = self.cell_size * cell_size_std
+        self._cell_size = cell_size  # in nanometers, used for scaling other parameters and generating initial coordinates
+        self.cell_size = self._cell_size / pixel_size
+        self.cell_size_std = (self._cell_size * cell_size_std) / pixel_size
         self.p1_rate = p1_rate
         self.p2_rate = p2_rate
         self.p3_rate = p3_rate
@@ -65,9 +68,7 @@ class StaphMembrane(Sample):
         Returns:
             A tilt angle in degrees.
         """
-        tilt_bucket = np.random.choice(
-            [0, 1, 2], p=[0.05, 0.40, 0.55]
-        )
+        tilt_bucket = np.random.choice([0, 1, 2], p=[0.05, 0.40, 0.55])
         if tilt_bucket == 0:
             return np.random.uniform(0.0, 15.0)
         if tilt_bucket == 1:
@@ -113,7 +114,10 @@ class StaphMembrane(Sample):
         Returns:
             A configured ``Cell`` instance.
         """
-        length = np.random.normal(self.cell_size, self.cell_size_std)
+        length = np.random.uniform(
+            self.cell_size - self.cell_size_std,
+            self.cell_size + self.cell_size_std,
+        )
         cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.05)
         p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
@@ -257,8 +261,8 @@ class StaphMembrane(Sample):
 
                     # Minimum safe distance (sum of major axes)
                     min_safe_distance = (
-                        (cell_a.major_axis + cell_b.major_axis) / 2 + 1
-                    )
+                        cell_a.major_axis + cell_b.major_axis
+                    ) / 2 + 1
 
                     # Check for collision
                     if distance < min_safe_distance and distance > 0:
@@ -403,8 +407,8 @@ class StaphMembrane(Sample):
 
                 # Minimum safe distance (sum of major axes)
                 min_safe_distance = (
-                    (daughter.major_axis + neighbor_cell.major_axis) / 2
-                )
+                    daughter.major_axis + neighbor_cell.major_axis
+                ) / 2
 
                 # If cells overlap, push them apart
                 if distance < min_safe_distance and distance > 0:
@@ -642,9 +646,7 @@ def draw_projected_septum(
         inner_projected = 0.0
 
     if inner_radius > 0.5 and inner_projected > 0.35:
-        inner = (
-            (u / inner_radius) ** 2 + (v / inner_projected) ** 2 <= 1.0
-        )
+        inner = (u / inner_radius) ** 2 + (v / inner_projected) ** 2 <= 1.0
         septum_shape = outer & ~inner
     else:
         septum_shape = outer
