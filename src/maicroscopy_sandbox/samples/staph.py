@@ -539,11 +539,16 @@ def draw_ellipse_with_axes(
         septum_completion,
     )
 
-    septum = septum * (cyto > 0).astype(np.float32)
-    membrane = membrane * (septum <= 0).astype(np.float32)
-    cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
-    septum = septum * value_septum
-    cyto = cyto * value_cyto
+    septum_mask = septum > 0
+    cytoplasm_mask = eroded > 0
+
+    # Give the septum precedence anywhere it coincides with membrane pixels so
+    # the overlap keeps the septum signal instead of creating a brighter mix.
+    septum = septum_mask.astype(np.float32) * value_septum
+    membrane = membrane * (~septum_mask).astype(np.float32)
+    cyto = (
+        cytoplasm_mask.astype(np.float32) - septum_mask.astype(np.float32)
+    ) * value_cyto
     return membrane, cyto, septum
 
 
