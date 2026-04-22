@@ -82,7 +82,7 @@ class StaphMembrane(Sample):
         Returns:
             A rotation offset in degrees.
         """
-        return np.random.uniform(-20.0, 20.0)
+        return 0
 
     def create_cells(self, n_objects):
         """Create the initial population of bacterial cells.
@@ -633,13 +633,21 @@ def draw_projected_septum(
     outer = (u / ring_radius) ** 2 + (v / projected_radius) ** 2 <= 1.0
     if septum_phase == "ring":
         septum_completion = np.clip(septum_completion, 0.0, 1.0)
-        inner_radius = max(
-            min_phase2_inner_radius,
-            max_inner_radius * (1.0 - septum_completion),
+        inner_radius = min(
+            max_inner_radius,
+            max(
+                0.0,
+                max_inner_radius * (1.0 - septum_completion),
+                min_phase2_inner_radius * (1.0 - septum_completion),
+            ),
         )
-        inner_projected = max(
-            min_phase2_inner_projected,
-            max_inner_projected * (1.0 - septum_completion),
+        inner_projected = min(
+            max_inner_projected,
+            max(
+                0.0,
+                max_inner_projected * (1.0 - septum_completion),
+                min_phase2_inner_projected * (1.0 - septum_completion),
+            ),
         )
     else:
         inner_radius = 0.0
