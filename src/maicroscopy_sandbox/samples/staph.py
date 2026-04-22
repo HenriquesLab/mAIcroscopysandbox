@@ -3,7 +3,7 @@ import numpy as np
 
 from .sample import Sample
 from dataclasses import dataclass
-from skimage.draw import ellipse_perimeter
+from skimage.draw import ellipse_perimeter, line
 from skimage.morphology import binary_erosion, binary_dilation
 from scipy.ndimage import binary_fill_holes
 
@@ -231,7 +231,7 @@ class StaphMembrane(Sample):
             septum_completion=septum_completion,
             value_membrane=1,
             value_cyto=self.cyto_fluor,
-            value_septum=1,
+            value_septum=2,
         )
 
         mask[row_slice, col_slice] += membrane_mask + cyto_mask + septum_mask
@@ -540,6 +540,7 @@ def draw_ellipse_with_axes(
     )
 
     septum = septum * (cyto > 0).astype(np.float32)
+    membrane = membrane * (septum <= 0).astype(np.float32)
     cyto = (eroded > 0).astype(np.float32) - (septum > 0).astype(np.float32)
     septum = septum * value_septum
     cyto = cyto * value_cyto
@@ -601,83 +602,54 @@ def draw_projected_septum(
     theta = np.deg2rad(cell_angle_deg + 90.0 + septum_rotation_deg)
     tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
 
-    ring_radius = max(
-        1.5, _axis_length_to_semi_axis(float(minor_axis_length)) * 0.98
+    half_length = max(
+        1.0,
+        _axis_length_to_semi_axis(float(minor_axis_length)) * 0.98,
     )
-    projected_radius = max(0.6, ring_radius * np.cos(tilt_rad))
-    ring_band_thickness = max(0.85, ring_radius * 0.22)
-    max_inner_radius = max(0.5, ring_radius - ring_band_thickness)
-    max_inner_projected = max(
-        0.35, projected_radius - max(0.35, ring_band_thickness)
-    )
-    min_phase2_inner_radius = 0.55
-    min_phase2_inner_projected = 0.36
-    # Keep near-perpendicular septa visibly thick and taper the slice so
-    # the ends preserve the curvature of the projected ring.
-    cut_half_thickness = max(
-        ring_band_thickness * (0.55 + 0.28 * np.sin(tilt_rad)),
-        projected_radius * 0.24,
-        0.9,
-    )
-
-    pad = int(np.ceil(max(ring_radius, projected_radius))) + 4
+    pad = int(np.ceil(half_length)) + 4
     row_min = max(0, int(cy) - pad)
     row_max = min(septum.shape[0], int(cy) + pad + 1)
     col_min = max(0, int(cx) - pad)
     col_max = min(septum.shape[1], int(cx) + pad + 1)
 
-    rows, cols = np.mgrid[row_min:row_max, col_min:col_max]
-    dy = rows - cy
-    dx = cols - cx
+    axis_dx = half_length * np.cos(theta)
+    axis_dy = half_length * np.sin(theta)
+    start = np.array([cx - axis_dx, cy - axis_dy], dtype=np.float32)
+    end = np.array([cx + axis_dx, cy + axis_dy], dtype=np.float32)
+    midpoint = (start + end) / 2.0
 
-    u = dx * np.cos(theta) + dy * np.sin(theta)
-    v = -dx * np.sin(theta) + dy * np.cos(theta)
-
-    outer = (u / ring_radius) ** 2 + (v / projected_radius) ** 2 <= 1.0
+    segments = []
     if septum_phase == "closed":
-        closed_half_thickness = max(
-            0.9,
-            projected_radius * 0.24,
-            ring_band_thickness * 0.35,
-        )
-        local_mask = (np.abs(u) <= ring_radius) & (
-            np.abs(v) <= closed_half_thickness
-        )
-        septum[row_min:row_max, col_min:col_max][local_mask] = 1
-        return septum
-
-    if septum_phase == "ring":
-        septum_completion = np.clip(septum_completion, 0.0, 1.0)
-        inner_radius = min(
-            max_inner_radius,
-            max(
-                0.0,
-                max_inner_radius * (1.0 - septum_completion),
-                min_phase2_inner_radius * (1.0 - septum_completion),
-            ),
-        )
-        inner_projected = min(
-            max_inner_projected,
-            max(
-                0.0,
-                max_inner_projected * (1.0 - septum_completion),
-                min_phase2_inner_projected * (1.0 - septum_completion),
-            ),
-        )
-    if inner_radius > 0.5 and inner_projected > 0.35:
-        inner = (u / inner_radius) ** 2 + (v / inner_projected) ** 2 <= 1.0
-        septum_shape = outer & ~inner
+        segments.append((start, end))
     else:
-        septum_shape = outer
+        septum_completion = np.clip(septum_completion, 0.0, 1.0)
+        inward_fraction = 1.0 - septum_completion
+        inner_offset = (end - start) * (inward_fraction / 2.0)
+        inner_start = midpoint - inner_offset
+        inner_end = midpoint + inner_offset
+        segments.append((start, inner_start))
+        segments.append((inner_end, end))
 
-    taper = np.sqrt(np.clip(1.0 - (u / max(ring_radius, 1e-6)) ** 2, 0.0, 1.0))
-    local_cut_half_thickness = np.maximum(
-        ring_band_thickness * 0.35, cut_half_thickness * taper
-    )
-    midcut = np.abs(v) <= local_cut_half_thickness
-    local_mask = septum_shape & midcut
+    local_mask = np.zeros_like(septum, dtype=bool)
+    for p0, p1 in segments:
+        rr, cc = line(
+            int(round(p0[1])),
+            int(round(p0[0])),
+            int(round(p1[1])),
+            int(round(p1[0])),
+        )
+        valid = (
+            (rr >= row_min)
+            & (rr < row_max)
+            & (cc >= col_min)
+            & (cc < col_max)
+        )
+        local_mask[rr[valid], cc[valid]] = True
 
-    septum[row_min:row_max, col_min:col_max][local_mask] = 1
+    if np.sin(tilt_rad) > 0.7:
+        local_mask = binary_dilation(local_mask)
+
+    septum[local_mask] = 1
     return septum
 
 
