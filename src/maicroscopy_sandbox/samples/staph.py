@@ -123,8 +123,9 @@ class StaphMembrane(Sample):
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
         p3 = np.random.randint(self.p3_rate - 5, self.p3_rate + 5)
 
+        total_progression = max(p1 + p2 + p3, 1)
         if progression is None:
-            progression = np.random.randint(0, 100)
+            progression = np.random.randint(0, total_progression)
 
         cell = Cell(
             coordinates[0],
@@ -167,11 +168,12 @@ class StaphMembrane(Sample):
         for cell_id, cell in self.cells.items():
             septum_phase = "none"
             sep_completion = 0.0
+            cycle_end = cell.p1 + cell.p2 + cell.p3
             if cell.progression >= cell.p1:
                 if cell.progression < (cell.p1 + cell.p2):
                     septum_phase = "ring"
                     sep_completion = (cell.progression - cell.p1) / cell.p2
-                elif cell.progression < 100:
+                elif cell.progression < cycle_end:
                     septum_phase = "closed"
                     sep_completion = 1.0
 
@@ -317,12 +319,13 @@ class StaphMembrane(Sample):
 
         for i in range(rate):
             cell.progression += 1
+            cycle_end = cell.p1 + cell.p2 + cell.p3
             if cell.progression < cell.p1 or (
-                100 > cell.progression > (cell.p1 + cell.p2)
+                cycle_end > cell.progression > (cell.p1 + cell.p2)
             ):
                 # Growth phase
                 cell.major_axis += cell.max_axis_increase
-            elif cell.progression >= 100 and cell_id is not None:
+            elif cell.progression >= cycle_end and cell_id is not None:
                 self.divide_cell(cell_id)
                 break
 
@@ -631,6 +634,18 @@ def draw_projected_septum(
     v = -dx * np.sin(theta) + dy * np.cos(theta)
 
     outer = (u / ring_radius) ** 2 + (v / projected_radius) ** 2 <= 1.0
+    if septum_phase == "closed":
+        closed_half_thickness = max(
+            0.9,
+            projected_radius * 0.24,
+            ring_band_thickness * 0.35,
+        )
+        local_mask = (np.abs(u) <= ring_radius) & (
+            np.abs(v) <= closed_half_thickness
+        )
+        septum[row_min:row_max, col_min:col_max][local_mask] = 1
+        return septum
+
     if septum_phase == "ring":
         septum_completion = np.clip(septum_completion, 0.0, 1.0)
         inner_radius = min(
@@ -649,10 +664,6 @@ def draw_projected_septum(
                 min_phase2_inner_projected * (1.0 - septum_completion),
             ),
         )
-    else:
-        inner_radius = 0.0
-        inner_projected = 0.0
-
     if inner_radius > 0.5 and inner_projected > 0.35:
         inner = (u / inner_radius) ** 2 + (v / inner_projected) ** 2 <= 1.0
         septum_shape = outer & ~inner
