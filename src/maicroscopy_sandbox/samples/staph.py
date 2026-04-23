@@ -8,6 +8,8 @@ from skimage.morphology import binary_erosion, binary_dilation
 from scipy.ndimage import binary_fill_holes
 
 ELLIPSE_MORPHOLOGY_PADDING = 8
+SEPTUM_VISIBILITY_EPSILON = 0.02
+SEPTUM_LINE_HALF_WIDTH = 0.75
 
 
 class StaphMembrane(Sample):
@@ -63,26 +65,21 @@ class StaphMembrane(Sample):
 
     @staticmethod
     def sample_septum_tilt_deg():
-        """Sample a septum tilt relative to the image plane.
+        """Return a perpendicular septum orientation.
 
         Returns:
             A tilt angle in degrees.
         """
-        tilt_bucket = np.random.choice([0, 1, 2], p=[0.05, 0.40, 0.55])
-        if tilt_bucket == 0:
-            return np.random.uniform(0.0, 15.0)
-        if tilt_bucket == 1:
-            return np.random.uniform(15.0, 60.0)
-        return np.random.uniform(60.0, 90.0)
+        return 90.0
 
     @staticmethod
     def sample_septum_rotation_deg():
-        """Sample a small in-plane deviation around the cell minor axis.
+        """Return a septum aligned with the cell minor axis.
 
         Returns:
             A rotation offset in degrees.
         """
-        return 0
+        return 0.0
 
     def create_cells(self, n_objects):
         """Create the initial population of bacterial cells.
@@ -123,9 +120,8 @@ class StaphMembrane(Sample):
         p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
         p3 = np.random.randint(self.p3_rate - 5, self.p3_rate + 5)
 
-        total_progression = max(p1 + p2 + p3, 1)
         if progression is None:
-            progression = np.random.randint(0, total_progression)
+            progression = np.random.randint(0, 100)
 
         cell = Cell(
             coordinates[0],
@@ -166,16 +162,7 @@ class StaphMembrane(Sample):
 
         # Now render ALL cells (including newly created daughter cells)
         for cell_id, cell in self.cells.items():
-            septum_phase = "none"
-            sep_completion = 0.0
-            cycle_end = cell.p1 + cell.p2 + cell.p3
-            if cell.progression >= cell.p1:
-                if cell.progression < (cell.p1 + cell.p2):
-                    septum_phase = "ring"
-                    sep_completion = (cell.progression - cell.p1) / cell.p2
-                elif cell.progression < cycle_end:
-                    septum_phase = "closed"
-                    sep_completion = 1.0
+            septum_phase, sep_completion = calculate_septum_state(cell)
 
             self._render_cell_into_mask(
                 mask,
@@ -319,13 +306,12 @@ class StaphMembrane(Sample):
 
         for i in range(rate):
             cell.progression += 1
-            cycle_end = cell.p1 + cell.p2 + cell.p3
             if cell.progression < cell.p1 or (
-                cycle_end > cell.progression > (cell.p1 + cell.p2)
+                100 > cell.progression > (cell.p1 + cell.p2)
             ):
                 # Growth phase
                 cell.major_axis += cell.max_axis_increase
-            elif cell.progression >= cycle_end and cell_id is not None:
+            elif cell.progression >= 100 and cell_id is not None:
                 self.divide_cell(cell_id)
                 break
 
@@ -539,16 +525,16 @@ def draw_ellipse_with_axes(
         septum_completion,
     )
 
-    septum_mask = septum > 0
+    septum_mask = septum * (cyto > 0).astype(np.float32)
+    septum_pixels = septum_mask > 0
     cytoplasm_mask = eroded > 0
 
-    # Give the septum precedence anywhere it coincides with membrane pixels so
-    # the overlap keeps the septum signal instead of creating a brighter mix.
-    septum = septum_mask.astype(np.float32) * value_septum
-    membrane = membrane * (~septum_mask).astype(np.float32)
-    cyto = (
-        cytoplasm_mask.astype(np.float32) - septum_mask.astype(np.float32)
-    ) * value_cyto
+    # The septum should remain brighter than the membrane wherever they overlap.
+    membrane = membrane * (~septum_pixels).astype(np.float32)
+    septum = septum_pixels.astype(np.float32) * value_septum
+    cyto = np.clip(
+        cytoplasm_mask.astype(np.float32) - septum_pixels.astype(np.float32)
+    , 0.0, 1.0) * value_cyto
     return membrane, cyto, septum
 
 
@@ -601,61 +587,170 @@ def draw_projected_septum(
     if septum_phase == "none":
         return septum
 
-    if septum_rotation_deg is None:
-        septum_rotation_deg = 0.0
-
-    theta = np.deg2rad(cell_angle_deg + 90.0 + septum_rotation_deg)
-    tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
-
-    half_length = max(
+    septum_rotation_deg = 0.0 if septum_rotation_deg is None else 0.0
+    axis_angle_deg = cell_angle_deg + 90.0 + septum_rotation_deg
+    axis_angle_rad = np.deg2rad(axis_angle_deg)
+    outer_radius = max(
         1.0,
         _axis_length_to_semi_axis(float(minor_axis_length)) * 0.98,
     )
-    pad = int(np.ceil(half_length)) + 4
-    row_min = max(0, int(cy) - pad)
-    row_max = min(septum.shape[0], int(cy) + pad + 1)
-    col_min = max(0, int(cx) - pad)
-    col_max = min(septum.shape[1], int(cx) + pad + 1)
+    tilt_rad = np.deg2rad(np.clip(septum_tilt_deg, 0.0, 90.0))
+    projected_radius = outer_radius * np.cos(tilt_rad)
 
-    axis_dx = half_length * np.cos(theta)
-    axis_dy = half_length * np.sin(theta)
-    start = np.array([cx - axis_dx, cy - axis_dy], dtype=np.float32)
-    end = np.array([cx + axis_dx, cy + axis_dy], dtype=np.float32)
-    midpoint = (start + end) / 2.0
+    rr, cc = np.indices(septum.shape, dtype=np.float32)
+    rel_row = rr - float(cy)
+    rel_col = cc - float(cx)
+    axis_coord = (
+        rel_col * np.cos(axis_angle_rad) + rel_row * np.sin(axis_angle_rad)
+    )
+    perp_coord = (
+        -rel_col * np.sin(axis_angle_rad) + rel_row * np.cos(axis_angle_rad)
+    )
 
-    segments = []
     if septum_phase == "closed":
-        segments.append((start, end))
+        septum_mask = _line_band_mask(
+            axis_coord,
+            perp_coord,
+            axis_radius=outer_radius,
+            line_half_width=SEPTUM_LINE_HALF_WIDTH,
+        )
     else:
         septum_completion = np.clip(septum_completion, 0.0, 1.0)
-        inward_fraction = 1.0 - septum_completion
-        inner_offset = (end - start) * (inward_fraction / 2.0)
-        inner_start = midpoint - inner_offset
-        inner_end = midpoint + inner_offset
-        segments.append((start, inner_start))
-        segments.append((inner_end, end))
-
-    local_mask = np.zeros_like(septum, dtype=bool)
-    for p0, p1 in segments:
-        rr, cc = line(
-            int(round(p0[1])),
-            int(round(p0[0])),
-            int(round(p1[1])),
-            int(round(p1[0])),
+        min_visible_completion = max(
+            SEPTUM_VISIBILITY_EPSILON,
+            2.0 / max(2.0 * outer_radius, 1.0),
         )
-        valid = (
-            (rr >= row_min)
-            & (rr < row_max)
-            & (cc >= col_min)
-            & (cc < col_max)
+        visible_completion = max(
+            septum_completion,
+            min_visible_completion,
         )
-        local_mask[rr[valid], cc[valid]] = True
+        if projected_radius <= SEPTUM_LINE_HALF_WIDTH:
+            septum_mask = _closing_line_mask(
+                axis_coord,
+                perp_coord,
+                axis_radius=outer_radius,
+                completion=visible_completion,
+                line_half_width=SEPTUM_LINE_HALF_WIDTH,
+            )
+        else:
+            inner_radius = outer_radius * (1.0 - visible_completion)
+            inner_projected_radius = projected_radius * (1.0 - visible_completion)
+            septum_mask = _ellipse_perimeter_mask(
+                septum.shape,
+                cy=cy,
+                cx=cx,
+                major_radius=outer_radius,
+                minor_radius=projected_radius,
+                angle_rad=axis_angle_rad,
+            )
+            if inner_radius > 0 and inner_projected_radius > 0:
+                septum_mask |= _ellipse_perimeter_mask(
+                    septum.shape,
+                    cy=cy,
+                    cx=cx,
+                    major_radius=inner_radius,
+                    minor_radius=inner_projected_radius,
+                    angle_rad=axis_angle_rad,
+                )
 
-    if np.sin(tilt_rad) > 0.7:
-        local_mask = binary_dilation(local_mask)
-
-    septum[local_mask] = 1
+    septum[septum_mask] = 1
     return septum
+
+
+def calculate_septum_state(cell):
+    """Return the septum rendering state for the current cell progression."""
+    progression = int(np.clip(cell.progression, 0, 100))
+    p1_end = max(0, int(cell.p1))
+    p2_duration = max(1, int(cell.p2))
+    p2_end = p1_end + p2_duration
+
+    if progression < p1_end:
+        return "none", 0.0
+    if progression < p2_end:
+        completion = (progression - p1_end) / p2_duration
+        return "ring", float(np.clip(completion, 0.0, 1.0))
+    if progression < 100:
+        return "closed", 1.0
+    return "none", 0.0
+
+
+def _line_band_mask(
+    axis_coord,
+    perp_coord,
+    axis_radius,
+    line_half_width,
+):
+    return (
+        (np.abs(axis_coord) <= axis_radius)
+        & (np.abs(perp_coord) <= line_half_width)
+    )
+
+
+def _closing_line_mask(
+    axis_coord,
+    perp_coord,
+    axis_radius,
+    completion,
+    line_half_width,
+):
+    if axis_radius <= 0:
+        return np.zeros(axis_coord.shape, dtype=bool)
+
+    completion = float(np.clip(completion, 0.0, 1.0))
+    inner_gap_half_length = axis_radius * (1.0 - completion)
+    return (
+        (np.abs(axis_coord) <= axis_radius)
+        & (np.abs(perp_coord) <= line_half_width)
+        & (np.abs(axis_coord) >= inner_gap_half_length)
+    )
+
+
+def _projected_ring_mask(
+    axis_coord,
+    perp_coord,
+    axis_radius,
+    projected_radius,
+):
+    if axis_radius <= 0:
+        return np.zeros(axis_coord.shape, dtype=bool)
+
+    if projected_radius <= SEPTUM_LINE_HALF_WIDTH:
+        return _line_band_mask(
+            axis_coord,
+            perp_coord,
+            axis_radius=axis_radius,
+            line_half_width=SEPTUM_LINE_HALF_WIDTH,
+        )
+
+    normalized = (
+        (axis_coord / axis_radius) ** 2
+        + (perp_coord / projected_radius) ** 2
+    )
+    return normalized <= 1.0
+
+
+def _ellipse_perimeter_mask(
+    shape,
+    cy,
+    cx,
+    major_radius,
+    minor_radius,
+    angle_rad,
+):
+    if major_radius < 1.0 or minor_radius < 1.0:
+        return np.zeros(shape, dtype=bool)
+
+    rr, cc = ellipse_perimeter(
+        int(round(cy)),
+        int(round(cx)),
+        int(round(minor_radius)),
+        int(round(major_radius)),
+        orientation=angle_rad,
+        shape=shape,
+    )
+    mask = np.zeros(shape, dtype=bool)
+    mask[rr, cc] = True
+    return mask
 
 
 def _axis_length_to_semi_axis(axis_length):
