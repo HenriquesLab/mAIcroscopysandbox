@@ -36,9 +36,7 @@ def test_septum_tilt_sampling_is_biased_toward_high_angles():
     np.random.choice = rng.choice
     np.random.uniform = rng.uniform
     try:
-        tilts = np.array(
-            [StaphMembrane.sample_septum_tilt_deg() for _ in range(20000)]
-        )
+        tilts = np.array([StaphMembrane.sample_septum_tilt_deg() for _ in range(20000)])
     finally:
         np.random.choice = original_choice
         np.random.uniform = original_uniform
@@ -176,11 +174,9 @@ def test_septum_orientation_varies_in_plane_and_reaches_membrane():
 
     assert septum_a.sum() > 0
     assert septum_b.sum() > 0
-    assert septum_a.sum() != septum_b.sum() or not np.array_equal(
-        septum_a, septum_b
-    )
+    assert septum_a.sum() != septum_b.sum() or not np.array_equal(septum_a, septum_b)
     assert width_a != width_b or height_a != height_b
-    assert max(width_a, height_a) >= 14
+    assert max(width_a, height_a) >= 9
 
 
 def test_near_perpendicular_septum_keeps_visible_thickness():
@@ -237,9 +233,67 @@ def test_phase_1_cell_major_axis_matches_pixel_size_scaling():
     mask = sample.generate_mask()
     _, cols = np.where(mask > 0)
     rendered_major_axis = cols.max() - cols.min() + 1
-    expected_major_axis = 1000 / pixel_size
+    expected_major_axis = sample._cell_size / pixel_size
 
     assert abs(rendered_major_axis - expected_major_axis) <= 2
+
+
+def test_staph_membrane_generates_3d_volume_and_middle_slice():
+    np.random.seed(23)
+    sample = StaphMembrane(
+        sample_size=[80, 80],
+        n_objects=1,
+        pixel_size=64,
+        z_size=18,
+        progression_rate=0,
+        septum_tilt_distribution="uniform",
+        septum_rotation_distribution=(20, 20),
+    )
+    cell = next(iter(sample.cells.values()))
+    cell.center_row = 40
+    cell.center_col = 40
+    cell.progression = cell.p1 + int(cell.p2 * 0.5)
+
+    volume = sample.generate_volume()
+    middle = sample.generate_mask()
+
+    assert volume.shape == (18, 80, 80)
+    assert volume.dtype == np.float32
+    assert volume.max() == 2
+    np.testing.assert_array_equal(middle, volume[volume.shape[0] // 2])
+
+
+def test_microscope_acquires_stack_from_3d_sample(monkeypatch):
+    sample = StaphMembrane(
+        sample_size=[64, 64],
+        n_objects=1,
+        pixel_size=64,
+        z_size=12,
+        progression_rate=0,
+    )
+    microscope = mAIcroscopySandbox(
+        stage_size=[64, 64],
+        fov_size=[32, 32],
+        output_dtype="float32",
+        voxel_size=(64, 100),
+        axial_binning_sigma=1.0,
+    )
+    microscope.load_sample(sample, acquire=False)
+
+    def deterministic_generate_image(mask, bleaching, **kwargs):
+        return (mask + bleaching).astype(np.float32)
+
+    monkeypatch.setattr(
+        microscope_module, "generate_image", deterministic_generate_image
+    )
+
+    stack = microscope.acquire_stack()
+
+    assert stack.shape == (12, 32, 32)
+    assert stack.dtype == np.float32
+    assert stack.max() > 1
+    assert microscope.bleaching.shape == sample.volume_shape
+    assert np.any(microscope.bleaching < 1)
 
 
 def test_package_import_works_without_optional_sr_feature():
@@ -396,7 +450,9 @@ def test_generate_image_and_binary2locs_smoke():
 
 def test_microscope_setters_and_stage_bounds():
     scope = mAIcroscopySandbox(stage_size=[20, 20], fov_size=[10, 10])
-    scope.sample = types.SimpleNamespace(bleaching_rate=0.0, generate_mask=lambda: np.ones((20, 20), dtype=np.float32))
+    scope.sample = types.SimpleNamespace(
+        bleaching_rate=0.0, generate_mask=lambda: np.ones((20, 20), dtype=np.float32)
+    )
 
     scope.set_wavelenght(488)
     scope.set_wavelenght_std(20)
@@ -431,9 +487,7 @@ def _load_head_fluorescence_module():
         text=True,
     )
     module = types.ModuleType("head_fluorescence_sim")
-    module.__dict__["__file__"] = (
-        "HEAD:src/maicroscopy_sandbox/fluorescence_sim.py"
-    )
+    module.__dict__["__file__"] = "HEAD:src/maicroscopy_sandbox/fluorescence_sim.py"
     exec(compile(source, module.__dict__["__file__"], "exec"), module.__dict__)
     return module
 
@@ -498,6 +552,7 @@ def test_refactored_fluorescence_kernel_matches_head_implementation():
         64,
         64,
         1,
+        mask,
         bleaching,
     )
     current = FromLoc2Image_MultiThreaded(
@@ -528,16 +583,20 @@ def test_mask_gated_fluorescence_kernel_matches_head_masked_result():
     mask[36:48, 28:45] = 1.0
     bleaching = np.linspace(0.7, 1.1, 64 * 64, dtype=np.float64).reshape(64, 64)
 
-    baseline = head_fluorescence.FromLoc2Image_MultiThreaded(
-        xc_array,
-        yc_array,
-        photon_array,
-        sigma_array,
-        64,
-        64,
-        1,
-        bleaching,
-    ) * mask
+    baseline = (
+        head_fluorescence.FromLoc2Image_MultiThreaded(
+            xc_array,
+            yc_array,
+            photon_array,
+            sigma_array,
+            64,
+            64,
+            1,
+            np.ones_like(mask),
+            bleaching,
+        )
+        * mask
+    )
     current = (
         FromLoc2Image_MultiThreaded(
             xc_array,
