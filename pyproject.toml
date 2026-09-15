@@ -24,10 +24,12 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
+  "matplotlib>=3.10.9",
   "numba",
   "numpy<2",
   "scikit-image",
   "scipy",
+  "stackview>=0.19.1",
   "tifffile",
 ]
 

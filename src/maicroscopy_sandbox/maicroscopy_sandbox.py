@@ -1,6 +1,7 @@
 from typing import Optional
 import numpy as np
 import warnings
+from scipy.ndimage import gaussian_filter1d
 
 from .fluorescence_sim import generate_image
 from .samples.sample import Sample
@@ -37,6 +38,8 @@ class mAIcroscopySandbox(object):
         gaussian_sigma: float = 2.0,
         output_dtype: str = "int16",
         random_seed: Optional[int] = None,
+        voxel_size: tuple[float, float] | None = None,
+        axial_binning_sigma: float | None = None,
     ):
         self.stage_size = stage_size
         self.bleaching = np.ones(stage_size).astype(np.float32)
@@ -54,6 +57,12 @@ class mAIcroscopySandbox(object):
         self.readout_noise = 50.0
         self.gaussian_sigma = gaussian_sigma
         self.output_dtype = output_dtype
+        self.voxel_size = (
+            (float(pixel_size), float(pixel_size))
+            if voxel_size is None
+            else (float(voxel_size[0]), float(voxel_size[1]))
+        )
+        self.axial_binning_sigma = axial_binning_sigma
         if random_seed is not None:
             np.random.seed(random_seed)
 
@@ -69,7 +78,8 @@ class mAIcroscopySandbox(object):
         """
 
         print(f"Loading sample of size: {sample.sample_size}")
-        self.bleaching = np.ones(sample.sample_size).astype(np.float32)
+        bleaching_shape = getattr(sample, "volume_shape", sample.sample_size)
+        self.bleaching = np.ones(bleaching_shape).astype(np.float32)
 
         print("Resetting stage position to center position")
         self.current_position = [
@@ -140,16 +150,22 @@ class mAIcroscopySandbox(object):
         Returns:
             The simulated frame converted to the configured output dtype.
         """
-        sample_mask = self.sample.generate_mask()
+        sample_mask = self._generate_sample_signal()
 
         row_start = self.current_position[0] - self.fov_size[0] // 2
         row_end = self.current_position[0] + self.fov_size[0] // 2
         col_start = self.current_position[1] - self.fov_size[1] // 2
         col_end = self.current_position[1] + self.fov_size[1] // 2
+        if sample_mask.ndim == 3:
+            z_index = sample_mask.shape[0] // 2
+            sample_mask = sample_mask[z_index]
+            bleaching = self.bleaching[z_index]
+        else:
+            bleaching = self.bleaching
 
         frame = generate_image(
             sample_mask[row_start:row_end, col_start:col_end],
-            bleaching=self.bleaching[row_start:row_end, col_start:col_end],
+            bleaching=bleaching[row_start:row_end, col_start:col_end],
             laser_intensity=(self.laser_power / 100) * self.laser_intensity,
             wavelenght=self.wavelenght,
             wavelenght_std=self.wavelenght_std,
@@ -163,14 +179,89 @@ class mAIcroscopySandbox(object):
         )
 
         bleaching_rate = self.sample.bleaching_rate
-        self.bleaching[row_start:row_end, col_start:col_end] -= (
-            self.bleaching[row_start:row_end, col_start:col_end]
-            * bleaching_rate
-            * (self.laser_power / 100)
-        )
+        bleaching_region = bleaching[row_start:row_end, col_start:col_end]
+        bleaching_region -= bleaching_region * bleaching_rate * (self.laser_power / 100)
         self.bleaching[self.bleaching < 0] = 0
 
         return frame.astype(self.get_dtype(self.output_dtype))
+
+    def acquire_stack(self):
+        """Acquire a fluorescence z stack from a 3D sample.
+
+        Returns:
+            A stack with shape ``(z, y, x)`` converted to the configured dtype.
+        """
+        sample_signal = self._generate_sample_signal()
+        if sample_signal.ndim != 3:
+            sample_signal = sample_signal[np.newaxis, :, :]
+
+        row_start = self.current_position[0] - self.fov_size[0] // 2
+        row_end = self.current_position[0] + self.fov_size[0] // 2
+        col_start = self.current_position[1] - self.fov_size[1] // 2
+        col_end = self.current_position[1] + self.fov_size[1] // 2
+
+        cropped_signal = sample_signal[:, row_start:row_end, col_start:col_end]
+        if self.bleaching.ndim == 3:
+            cropped_bleaching = self.bleaching[:, row_start:row_end, col_start:col_end]
+        else:
+            cropped_bleaching = np.broadcast_to(
+                self.bleaching[row_start:row_end, col_start:col_end],
+                cropped_signal.shape,
+            ).astype(np.float32)
+
+        stack = np.empty(cropped_signal.shape, dtype=np.float32)
+        for z_index in range(cropped_signal.shape[0]):
+            stack[z_index] = generate_image(
+                cropped_signal[z_index],
+                bleaching=cropped_bleaching[z_index],
+                laser_intensity=(self.laser_power / 100) * self.laser_intensity,
+                wavelenght=self.wavelenght,
+                wavelenght_std=self.wavelenght_std,
+                NA=self.NA,
+                sigma=self.sigma,
+                sigma_std=self.sigma_std,
+                ADC_per_photon_conversion=self.ADC_per_photon_conversion,
+                ADC_offset=self.ADC_offset,
+                readout_noise=self.readout_noise,
+                gaussian_sigma=self.gaussian_sigma,
+            )
+
+        bleaching_rate = self.sample.bleaching_rate
+        if self.bleaching.ndim == 3:
+            bleaching_region = self.bleaching[:, row_start:row_end, col_start:col_end]
+            bleaching_region -= (
+                bleaching_region * bleaching_rate * (self.laser_power / 100)
+            )
+        else:
+            bleaching_region = self.bleaching[row_start:row_end, col_start:col_end]
+            bleaching_region -= (
+                bleaching_region * bleaching_rate * (self.laser_power / 100)
+            )
+        self.bleaching[self.bleaching < 0] = 0
+        return stack.astype(self.get_dtype(self.output_dtype))
+
+    def _generate_sample_signal(self):
+        if hasattr(self.sample, "generate_volume"):
+            sample_signal = self.sample.generate_volume()
+        else:
+            sample_signal = self.sample.generate_mask()
+        return self._bin_axial_signal(sample_signal)
+
+    def _bin_axial_signal(self, sample_signal):
+        if sample_signal.ndim != 3:
+            return sample_signal
+
+        axial_sigma = self.axial_binning_sigma
+        if axial_sigma is None:
+            axial_sigma = max(0.0, self.voxel_size[1] / self.voxel_size[0] - 1.0)
+        if axial_sigma <= 0:
+            return sample_signal
+        return gaussian_filter1d(
+            sample_signal.astype(np.float32),
+            sigma=axial_sigma,
+            axis=0,
+            mode="nearest",
+        )
 
     def set_wavelenght(self, wavelenght: float = 600.0):
         """Set the excitation wavelength in nanometers.
@@ -212,9 +303,7 @@ class mAIcroscopySandbox(object):
         """
         self.sigma_std = sigma_std
 
-    def set_ADC_per_photon_conversion(
-        self, ADC_per_photon_conversion: float = 1.0
-    ):
+    def set_ADC_per_photon_conversion(self, ADC_per_photon_conversion: float = 1.0):
         """Set the analog-to-digital conversion factor.
 
         Args:
@@ -255,27 +344,19 @@ class mAIcroscopySandbox(object):
         new_movement = movement
 
         if self.current_position[0] + movement[0] > self.stage_size[0]:
-            warnings.warn(
-                "Stage out of bounds, moving to furthest Y axis edge"
-            )
+            warnings.warn("Stage out of bounds, moving to furthest Y axis edge")
             new_movement[0] = self.stage_size[0] - self.current_position[0]
 
         if self.current_position[1] + movement[1] > self.stage_size[1]:
-            warnings.warn(
-                "Stage out of bounds, moving to furthest X axis edge"
-            )
+            warnings.warn("Stage out of bounds, moving to furthest X axis edge")
             new_movement[1] = self.stage_size[1] - self.current_position[1]
 
         if self.current_position[0] + movement[0] < 0:
-            warnings.warn(
-                "Stage out of bounds, moving to furthest Y axis edge"
-            )
+            warnings.warn("Stage out of bounds, moving to furthest Y axis edge")
             new_movement[0] = -self.current_position[0]
 
         if self.current_position[1] + movement[1] < 0:
-            warnings.warn(
-                "Stage out of bounds, moving to furthest X axis edge"
-            )
+            warnings.warn("Stage out of bounds, moving to furthest X axis edge")
             new_movement[1] = -self.current_position[1]
 
         return new_movement
