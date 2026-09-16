@@ -36,7 +36,7 @@ class mAIcroscopySandbox(object):
         sigma: float = 1.0,
         sigma_std: float = 0.01,
         gaussian_sigma: float = 2.0,
-        output_dtype: str = "int16",
+        output_dtype: str = "uint16",
         random_seed: Optional[int] = None,
         voxel_size: tuple[float, float] | None = None,
         axial_binning_sigma: float | None = None,
@@ -126,23 +126,44 @@ class mAIcroscopySandbox(object):
             laser_power = 0
         self.laser_power = laser_power
 
-    def get_dtype(self, dtype_name: str = "int16"):
+    def get_dtype(self, dtype_name: str = "uint16"):
         """Return the NumPy dtype matching ``dtype_name``.
 
         Args:
-            dtype_name: String key such as ``"int16"`` or ``"float32"``.
+            dtype_name: String key such as ``"uint16"`` or ``"float32"``.
 
         Returns:
-            The matching NumPy dtype, or ``np.int16`` when unknown.
+            The matching NumPy dtype, or ``np.uint16`` when unknown.
         """
         dtype_mapping = {
+            "uint8": np.uint8,
+            "uint16": np.uint16,
+            "uint32": np.uint32,
             "int8": np.int8,
             "int16": np.int16,
             "int32": np.int32,
             "float32": np.float32,
             "float64": np.float64,
         }
-        return dtype_mapping.get(dtype_name, np.int16)
+        return dtype_mapping.get(dtype_name, np.uint16)
+
+    def _to_output_dtype(self, frame: np.ndarray) -> np.ndarray:
+        """Clip a float frame to the output dtype's representable range and cast.
+
+        Prevents silent overflow/wraparound (e.g. large positive values wrapping
+        to negative numbers when cast to a signed/unsigned integer dtype).
+
+        Args:
+            frame: Simulated frame as a floating-point array.
+
+        Returns:
+            The frame clipped and cast to ``self.output_dtype``.
+        """
+        dtype = self.get_dtype(self.output_dtype)
+        if np.issubdtype(dtype, np.integer):
+            info = np.iinfo(dtype)
+            frame = np.clip(frame, info.min, info.max)
+        return frame.astype(dtype)
 
     def acquire_image(self):
         """Acquire a fluorescence frame at the current stage position.
@@ -183,7 +204,7 @@ class mAIcroscopySandbox(object):
         bleaching_region -= bleaching_region * bleaching_rate * (self.laser_power / 100)
         self.bleaching[self.bleaching < 0] = 0
 
-        return frame.astype(self.get_dtype(self.output_dtype))
+        return self._to_output_dtype(frame)
 
     def acquire_stack(self):
         """Acquire a fluorescence z stack from a 3D sample.
@@ -238,7 +259,7 @@ class mAIcroscopySandbox(object):
                 bleaching_region * bleaching_rate * (self.laser_power / 100)
             )
         self.bleaching[self.bleaching < 0] = 0
-        return stack.astype(self.get_dtype(self.output_dtype))
+        return self._to_output_dtype(stack)
 
     def _generate_sample_signal(self):
         if hasattr(self.sample, "generate_volume"):

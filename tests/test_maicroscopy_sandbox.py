@@ -529,7 +529,7 @@ def test_acquisition_updates_bleaching_and_returns_frame(monkeypatch):
     frame = microscope.acquire_image()
 
     assert frame.shape == (128, 128)
-    assert frame.dtype == np.int16
+    assert frame.dtype == np.uint16
     assert np.any(microscope.bleaching < initial_bleaching)
     assert np.all(microscope.bleaching >= 0)
 
