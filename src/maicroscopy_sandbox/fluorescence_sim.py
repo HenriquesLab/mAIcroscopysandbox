@@ -64,11 +64,14 @@ def generate_image(
     np.random.seed(None)
     out = (
         ADC_per_photon_conversion * np.random.poisson(out)
-        + readout_noise * np.random.normal(size=(mask.shape[0], mask.shape[1]))
+
         + ADC_offset
     )
-    out[out < 0] = 0
+
     out = gaussian(out, gaussian_sigma)
+    out += readout_noise * np.random.normal(size=(mask.shape[0], mask.shape[1]))
+    out[out < 0] = 0
+    
     return out
 
 
