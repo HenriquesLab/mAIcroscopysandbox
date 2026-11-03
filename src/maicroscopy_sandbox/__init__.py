@@ -2,7 +2,7 @@
 
 __author__ = "Bruno Saraiva"
 __email__ = "bruno.msaraiva2@gmail.com"
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .maicroscopy_sandbox import mAIcroscopySandbox
 from .samples.sample import Sample

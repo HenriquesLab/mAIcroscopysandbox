@@ -2,6 +2,7 @@
 
 """Tests for `maicroscopy_sandbox` package."""
 
+import copy
 import os
 import pathlib
 import subprocess
@@ -659,3 +660,18 @@ def test_septum_aligns_with_cell_minor_axis():
 
     assert vertical_height > vertical_width
     assert horizontal_width > horizontal_height
+
+
+def test_seeded_deepcopied_samples_progress_identically():
+    microscope = mAIcroscopySandbox(
+        stage_size=[300, 300], fov_size=[200, 200], random_seed=1
+    )
+    sample = StaphMembrane(sample_size=[300, 300], n_objects=6, progression_rate=20)
+    runs = []
+    for sample_copy in (copy.deepcopy(sample), copy.deepcopy(sample)):
+        scope = copy.deepcopy(microscope)
+        scope.load_sample(sample_copy)
+        runs.append([scope.acquire_image() for _ in range(4)])
+
+    for frame_a, frame_b in zip(*runs):
+        assert np.array_equal(frame_a, frame_b)

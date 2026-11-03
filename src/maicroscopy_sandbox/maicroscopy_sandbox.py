@@ -63,6 +63,9 @@ class mAIcroscopySandbox(object):
             else (float(voxel_size[0]), float(voxel_size[1]))
         )
         self.axial_binning_sigma = axial_binning_sigma
+        # Own RNG for acquisition noise; the global seed is also set so samples
+        # created afterwards (which derive their own RNG from it) are reproducible.
+        self.rng = np.random.RandomState(random_seed)
         if random_seed is not None:
             np.random.seed(random_seed)
 
@@ -197,6 +200,7 @@ class mAIcroscopySandbox(object):
             ADC_offset=self.ADC_offset,
             readout_noise=self.readout_noise,
             gaussian_sigma=self.gaussian_sigma,
+            rng=self.rng,
         )
 
         bleaching_rate = self.sample.bleaching_rate
@@ -245,6 +249,7 @@ class mAIcroscopySandbox(object):
                 ADC_offset=self.ADC_offset,
                 readout_noise=self.readout_noise,
                 gaussian_sigma=self.gaussian_sigma,
+                rng=self.rng,
             )
 
         bleaching_rate = self.sample.bleaching_rate

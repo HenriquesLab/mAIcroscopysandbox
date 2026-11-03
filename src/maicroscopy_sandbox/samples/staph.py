@@ -55,7 +55,9 @@ class StaphMembrane(Sample):
         septum_rotation_distribution: str
         | tuple[float, float]
         | Callable[[], float] = "uniform",
+        random_seed: int | None = None,
     ):
+        self.rng = _make_rng(random_seed)
         self.sample_size = sample_size
         self.bleaching_rate = bleaching_rate
         self.voxel_size = (
@@ -84,25 +86,33 @@ class StaphMembrane(Sample):
         self.cyto_fluor = cyto_fluor
 
     @staticmethod
-    def sample_septum_tilt_deg():
+    def sample_septum_tilt_deg(rng=None):
         """Return a tilt angle biased toward edge-on septa.
+
+        Args:
+            rng: Optional ``self.rng.RandomState``; defaults to the global RNG.
 
         Returns:
             A tilt angle in degrees.
         """
         bins = np.array([[0, 15], [15, 30], [30, 45], [45, 60], [60, 90]])
         probabilities = np.array([0.05, 0.10, 0.20, 0.25, 0.40])
-        selected = np.random.choice(len(bins), p=probabilities)
-        return float(np.random.uniform(bins[selected, 0], bins[selected, 1]))
+        rng = np.random if rng is None else rng
+        selected = rng.choice(len(bins), p=probabilities)
+        return float(rng.uniform(bins[selected, 0], bins[selected, 1]))
 
     @staticmethod
-    def sample_septum_rotation_deg():
+    def sample_septum_rotation_deg(rng=None):
         """Return a random septum azimuth in the acquisition plane.
+
+        Args:
+            rng: Optional ``self.rng.RandomState``; defaults to the global RNG.
 
         Returns:
             A rotation offset in degrees.
         """
-        return float(np.random.uniform(0.0, 180.0))
+        rng = np.random if rng is None else rng
+        return float(rng.uniform(0.0, 180.0))
 
     def create_cells(self, n_objects):
         """Create the initial population of bacterial cells.
@@ -134,17 +144,17 @@ class StaphMembrane(Sample):
         Returns:
             A configured ``Cell`` instance.
         """
-        length = np.random.uniform(
+        length = self.rng.uniform(
             self.cell_size - self.cell_size_std,
             self.cell_size + self.cell_size_std,
         )
-        cell_max_axis_ratio = np.random.normal(self.axis_ratio, 0.05)
-        p1 = np.random.randint(self.p1_rate - 5, self.p1_rate + 5)
-        p2 = np.random.randint(self.p2_rate - 5, self.p2_rate + 5)
-        p3 = np.random.randint(self.p3_rate - 5, self.p3_rate + 5)
+        cell_max_axis_ratio = self.rng.normal(self.axis_ratio, 0.05)
+        p1 = self.rng.randint(self.p1_rate - 5, self.p1_rate + 5)
+        p2 = self.rng.randint(self.p2_rate - 5, self.p2_rate + 5)
+        p3 = self.rng.randint(self.p3_rate - 5, self.p3_rate + 5)
 
         if progression is None:
-            progression = np.random.randint(0, 100)
+            progression = self.rng.randint(0, 100)
 
         cell = Cell(
             coordinates[0],
@@ -152,7 +162,7 @@ class StaphMembrane(Sample):
             length,
             length,
             cell_max_axis_ratio / (p1 + p3),
-            np.random.uniform(-math.pi, math.pi),
+            self.rng.uniform(-math.pi, math.pi),
             self._sample_septum_tilt_deg(),
             self._sample_septum_rotation_deg(),
             p1,
@@ -166,17 +176,19 @@ class StaphMembrane(Sample):
     def _sample_septum_tilt_deg(self):
         return _sample_angle_distribution(
             self.septum_tilt_distribution,
-            default_sampler=self.sample_septum_tilt_deg,
+            default_sampler=lambda: self.sample_septum_tilt_deg(self.rng),
             low=0.0,
             high=90.0,
+            rng=self.rng,
         )
 
     def _sample_septum_rotation_deg(self):
         return _sample_angle_distribution(
             self.septum_rotation_distribution,
-            default_sampler=self.sample_septum_rotation_deg,
+            default_sampler=lambda: self.sample_septum_rotation_deg(self.rng),
             low=0.0,
             high=180.0,
+            rng=self.rng,
         )
 
     def generate_mask(self):
@@ -435,17 +447,17 @@ class StaphMembrane(Sample):
         # Create daughter cells using create_cell method
         # This ensures they have proper random variations
         daughter1 = self.create_cell(
-            daughter1_pos, progression=np.random.randint(0, parent_cell.p1)
+            daughter1_pos, progression=self.rng.randint(0, parent_cell.p1)
         )
         daughter2 = self.create_cell(
-            daughter2_pos, progression=np.random.randint(0, parent_cell.p2)
+            daughter2_pos, progression=self.rng.randint(0, parent_cell.p2)
         )
 
         # Rotate each daughter cell by 90 degrees from parent
-        daughter1.orientation = parent_cell.orientation + np.random.normal(
+        daughter1.orientation = parent_cell.orientation + self.rng.normal(
             np.pi / 2, 0.2
         )
-        daughter2.orientation = parent_cell.orientation + np.random.normal(
+        daughter2.orientation = parent_cell.orientation + self.rng.normal(
             np.pi / 2, 0.2
         )
 
@@ -534,8 +546,8 @@ class StaphMembrane(Sample):
         while len(coordinates) < num_points:
             # Generate a random point
             point = (
-                np.random.randint(0, shape[0]),
-                np.random.randint(0, shape[1]),
+                self.rng.randint(0, shape[0]),
+                self.rng.randint(0, shape[1]),
             )
 
             # Check if the point satisfies the spacing constraint
@@ -754,17 +766,28 @@ def _cell_render_roi_3d(
     return z_slice, row_slice, col_slice, local_z, local_row, local_col
 
 
-def _sample_angle_distribution(distribution, default_sampler, low, high):
+def _make_rng(random_seed=None):
+    """Return a per-sample RNG that travels with the sample on ``deepcopy``.
+
+    Without an explicit seed, it is seeded from the global NumPy RNG so that
+    ``np.random.seed`` (or a seeded microscope) still gives reproducible samples.
+    """
+    if random_seed is None:
+        random_seed = np.random.randint(0, 2**32, dtype=np.uint32)
+    return np.random.RandomState(random_seed)
+
+
+def _sample_angle_distribution(distribution, default_sampler, low, high, rng=np.random):
     if callable(distribution):
         return float(np.clip(distribution(), low, high))
 
     if isinstance(distribution, tuple):
-        return float(np.random.uniform(distribution[0], distribution[1]))
+        return float(rng.uniform(distribution[0], distribution[1]))
 
     if distribution == "biased_high":
         return float(default_sampler())
     if distribution == "uniform":
-        return float(np.random.uniform(low, high))
+        return float(rng.uniform(low, high))
     if distribution == "perpendicular":
         return float(high)
     if distribution == "parallel":

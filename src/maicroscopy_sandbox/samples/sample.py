@@ -34,8 +34,7 @@ class Sample(object):
         Returns:
             A ``float32`` binary mask with a deterministic random pattern.
         """
-        np.random.seed(0)
-        return np.random.random(self.sample_size).astype(np.float32) > 0.8
+        return np.random.RandomState(0).random_sample(self.sample_size).astype(np.float32) > 0.8
 
     def calculate_dynamics(self):
         """Update sample dynamics.

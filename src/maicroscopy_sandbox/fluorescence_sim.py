@@ -18,6 +18,7 @@ def generate_image(
     ADC_offset: float = 0.0,
     readout_noise: float = 50.0,
     gaussian_sigma: float = 5.0,
+    rng=None,
 ):
     """Generate a simulated fluorescence frame from a binary mask.
 
@@ -34,18 +35,21 @@ def generate_image(
         ADC_offset: Detector baseline offset.
         readout_noise: Detector noise standard deviation.
         gaussian_sigma: Gaussian blur applied at the end of the pipeline.
+        rng: Optional ``np.random.RandomState`` used for all noise; defaults to
+            the global NumPy RNG.
 
     Returns:
         A floating-point fluorescence image.
     """
+    rng = np.random if rng is None else rng
 
     y_locs, x_locs = np.nonzero(mask)
-    photon_array = np.random.normal(
+    photon_array = rng.normal(
         laser_intensity * 5, laser_intensity * 0.05, size=len(x_locs)
     )
     sigma = sigma * (wavelenght / 100) / NA
     sigma_std = sigma * (wavelenght_std / 100) / NA
-    sigma_array = np.random.normal(sigma, sigma_std, size=len(x_locs))
+    sigma_array = rng.normal(sigma, sigma_std, size=len(x_locs))
 
     out = (
         FromLoc2Image_MultiThreaded(
@@ -61,15 +65,14 @@ def generate_image(
         )
         * mask
     )
-    np.random.seed(None)
     out = (
-        ADC_per_photon_conversion * np.random.poisson(out)
+        ADC_per_photon_conversion * rng.poisson(out)
 
         + ADC_offset
     )
 
     out = gaussian(out, gaussian_sigma)
-    out += readout_noise * np.random.normal(size=(mask.shape[0], mask.shape[1]))
+    out += readout_noise * rng.normal(size=(mask.shape[0], mask.shape[1]))
     out[out < 0] = 0
     
     return out
@@ -153,18 +156,20 @@ def FromLoc2Image_MultiThreaded(
     return Image
 
 
-def binary2locs(img: np.ndarray, density: float):
+def binary2locs(img: np.ndarray, density: float, rng=None):
     """Return a random subset of ``1`` pixels from a binary image.
 
     Args:
         img: Binary image containing candidate pixels.
         density: Fraction of active pixels to sample.
+        rng: Optional ``np.random.RandomState``; defaults to the global RNG.
 
     Returns:
         Row and column index arrays for the selected pixels.
     """
     all_locs = np.nonzero(img == 1)
     n_points = int(len(all_locs[0]) * density)
-    selected_idx = np.random.choice(len(all_locs[0]), n_points, replace=False)
+    rng = np.random if rng is None else rng
+    selected_idx = rng.choice(len(all_locs[0]), n_points, replace=False)
     filtered_locs = all_locs[0][selected_idx], all_locs[1][selected_idx]
     return filtered_locs

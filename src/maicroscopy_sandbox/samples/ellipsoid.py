@@ -36,7 +36,13 @@ class Ellipsoid(object):
         cell_size: int = 100,
         cell_size_std: float = 5,
         mode: str = "Full",
+        random_seed: int | None = None,
     ):
+        self.rng = np.random.RandomState(
+            np.random.randint(0, 2**32, dtype=np.uint32)
+            if random_seed is None
+            else random_seed
+        )
         self.sample_size = sample_size
         self.movement_probability = movement_probability
         self.bleaching_rate = bleaching_rate
@@ -62,9 +68,9 @@ class Ellipsoid(object):
                 Cell(
                     coordinates[i][0],
                     coordinates[i][1],
-                    np.random.normal(self.cell_size, self.cell_size_std),
-                    np.random.normal(self.cell_size // 2, self.cell_size_std),
-                    np.random.randint(-math.pi, math.pi),
+                    self.rng.normal(self.cell_size, self.cell_size_std),
+                    self.rng.normal(self.cell_size // 2, self.cell_size_std),
+                    self.rng.randint(-math.pi, math.pi),
                 )
             )
 
@@ -99,12 +105,12 @@ class Ellipsoid(object):
     def calculate_dynamics(self):
         """Advance ellipsoid motion, rotation, and axis deformation."""
         for cell in self.cells:
-            if np.random.rand() < self.movement_probability:
-                cell.center_row += np.random.normal(0, self.movement_rate)
-                cell.center_col += np.random.normal(0, self.movement_rate)
-            if np.random.rand() < self.rotation_probability:
-                cell.orientation += np.random.normal(0, self.rotation)
-            if np.random.rand() < self.axis_deformation_probability:
+            if self.rng.rand() < self.movement_probability:
+                cell.center_row += self.rng.normal(0, self.movement_rate)
+                cell.center_col += self.rng.normal(0, self.movement_rate)
+            if self.rng.rand() < self.rotation_probability:
+                cell.orientation += self.rng.normal(0, self.rotation)
+            if self.rng.rand() < self.axis_deformation_probability:
                 cell.major_axis -= cell.major_axis*self.axis_deformation_rate
                 cell.minor_axis += cell.minor_axis*self.axis_deformation_rate
 
@@ -122,7 +128,7 @@ class Ellipsoid(object):
         coordinates = [(self.sample_size[0] // 2, self.sample_size[1] // 2)]
         while len(coordinates) < num_points:
             # Generate a random point
-            point = (np.random.randint(0, shape[0]), np.random.randint(0, shape[1]))
+            point = (self.rng.randint(0, shape[0]), self.rng.randint(0, shape[1]))
 
             # Check if the point satisfies the spacing constraint
             if all(
