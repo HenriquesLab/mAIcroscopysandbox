@@ -5,6 +5,7 @@
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import types
 
@@ -300,11 +301,7 @@ def test_package_import_works_without_optional_sr_feature():
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     completed = subprocess.run(
         [
-            "conda",
-            "run",
-            "-n",
-            "aiobio",
-            "python",
+            sys.executable,
             "-c",
             (
                 "import maicroscopy_sandbox; "
